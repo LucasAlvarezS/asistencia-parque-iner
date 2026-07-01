@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   Identidad visual INER
+   verde #044245 · gris #707070 · ámbar #FFA700
+   ============================================================ */
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: #f4f6f6;
+  color: #1a1f1f;
+  font-family: var(--font-sans), Montserrat, Arial, Helvetica, sans-serif;
+}
+
+/* Mejor experiencia táctil en celular/tablet */
+button,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+@layer components {
+  .campo {
+    /* text-base (16px) evita el auto-zoom de iOS al enfocar inputs en móvil */
+    @apply w-full rounded-lg border border-black/15 bg-white px-3 py-2.5 text-base outline-none focus:border-iner-green focus:ring-2 focus:ring-iner-green/30;
+  }
+  .btn-primary {
+    @apply rounded-lg bg-iner-green px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-iner-green-700 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-secondary {
+    @apply rounded-lg border border-iner-green/30 bg-white px-4 py-3 text-sm font-bold text-iner-green transition hover:bg-iner-green-50 disabled:opacity-60;
+  }
+}

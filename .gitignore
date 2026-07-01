@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+.env*.local
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
+
+# Service worker generado por Serwist (build artifact)
+public/sw.js
+public/sw.js.map
+public/swe-worker-*.js
+
+# Lista real de técnicos (contiene contraseñas): nunca versionar
+scripts/tecnicos.json

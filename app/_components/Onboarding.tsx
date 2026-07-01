@@ -1,0 +1,189 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { ESTADO_ASIGNACION, PAIS_LABEL, type Pais, TZ_POR_PAIS } from "@/lib/catalogos";
+import {
+  type AeroCache,
+  type ParqueCache,
+  guardarAeros,
+  guardarAsignacion,
+  guardarParques,
+  leerParques,
+  leerPerfil,
+} from "@/lib/offline/sesion";
+import { Hero } from "./Hero";
+
+export function Onboarding({ onReady }: { onReady: () => void }) {
+  const [parques, setParques] = useState<ParqueCache[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [creando, setCreando] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const hidratarAsignacion = useCallback(
+    async (a: { id: string; parque_id: string; inicio_ts: string }, lista: ParqueCache[]) => {
+      const p = lista.find((x) => x.id === a.parque_id);
+      if (!p) return false;
+      const supabase = createClient();
+      const { data: aeros } = await supabase
+        .from("aeros")
+        .select("id, numero, nombre")
+        .eq("parque_id", p.id)
+        .order("numero");
+      await guardarAeros(p.id, (aeros ?? []) as AeroCache[]);
+      await guardarAsignacion({
+        id: a.id,
+        parque_id: p.id,
+        parque_nombre: p.nombre,
+        pais: p.pais,
+        tz: TZ_POR_PAIS[p.pais],
+        inicio_ts: a.inicio_ts,
+      });
+      return true;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      setCargando(true);
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("parques")
+          .select("id, nombre, pais, empresa_id, turbinas")
+          .eq("activo", true)
+          .order("pais")
+          .order("orden");
+        if (error) throw error;
+        const lista = (data ?? []) as ParqueCache[];
+        if (!vivo) return;
+        setParques(lista);
+        await guardarParques(lista);
+
+        // Reconcilia: si ya hay una asignación activa en el server (p.ej. dispositivo
+        // nuevo), la reusa y entra directo al check-in (evita doble activa, C4).
+        const perfil = await leerPerfil();
+        if (perfil) {
+          const { data: act } = await supabase
+            .from("asignaciones")
+            .select("id, parque_id, inicio_ts")
+            .eq("tecnico_id", perfil.id)
+            .eq("estado", ESTADO_ASIGNACION.ACTIVA)
+            .maybeSingle();
+          if (act && (await hidratarAsignacion(act, lista))) {
+            if (vivo) onReady();
+            return;
+          }
+        }
+      } catch {
+        const cache = await leerParques();
+        if (cache?.length) setParques(cache);
+        else if (vivo)
+          setError("Necesitás conexión la primera vez para cargar los parques.");
+      } finally {
+        if (vivo) setCargando(false);
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [hidratarAsignacion, onReady]);
+
+  async function elegir(p: ParqueCache) {
+    setError(null);
+    setCreando(p.id);
+    try {
+      if (!navigator.onLine) throw new Error("Elegir un parque requiere conexión.");
+      const perfil = await leerPerfil();
+      if (!perfil) throw new Error("Perfil no disponible; volvé a iniciar sesión.");
+      const supabase = createClient();
+
+      const id = crypto.randomUUID();
+      const inicio_ts = new Date().toISOString();
+      const { error } = await supabase.from("asignaciones").insert({
+        id,
+        tecnico_id: perfil.id,
+        parque_id: p.id,
+        estado: ESTADO_ASIGNACION.ACTIVA,
+        inicio_ts,
+      });
+      if (error) throw error;
+
+      const { data: aeros } = await supabase
+        .from("aeros")
+        .select("id, numero, nombre")
+        .eq("parque_id", p.id)
+        .order("numero");
+      await guardarAeros(p.id, (aeros ?? []) as AeroCache[]);
+      await guardarAsignacion({
+        id,
+        parque_id: p.id,
+        parque_nombre: p.nombre,
+        pais: p.pais,
+        tz: TZ_POR_PAIS[p.pais],
+        inicio_ts,
+      });
+      onReady();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo crear la asignación.");
+    } finally {
+      setCreando(null);
+    }
+  }
+
+  const paises = [...new Set(parques.map((p) => p.pais))] as Pais[];
+
+  return (
+    <main className="flex min-h-full flex-1 items-center justify-center px-4 py-10">
+      <div className="w-full max-w-md">
+        <Hero subtitulo="Elegí el parque a inspeccionar" />
+        <div className="rounded-b-2xl border border-t-0 border-black/10 bg-white p-4 shadow-sm">
+          {error && (
+            <p className="mb-3 rounded-lg border border-iner-amber bg-iner-amber-50 px-3 py-2 text-sm text-[#9a6200]">
+              {error}
+            </p>
+          )}
+
+          {cargando ? (
+            <p className="py-8 text-center text-sm text-iner-gray">Cargando parques…</p>
+          ) : (
+            <div className="space-y-4">
+              {paises.map((pais) => (
+                <div key={pais}>
+                  <p className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-iner-gray">
+                    {PAIS_LABEL[pais] ?? pais}
+                  </p>
+                  <ul className="divide-y divide-black/5 overflow-hidden rounded-lg border border-black/10">
+                    {parques
+                      .filter((p) => p.pais === pais)
+                      .map((p) => (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            disabled={creando !== null}
+                            onClick={() => elegir(p)}
+                            className="flex w-full items-center justify-between px-3 py-3 text-left transition hover:bg-iner-green-50 disabled:opacity-50"
+                          >
+                            <span className="font-semibold text-foreground">{p.nombre}</span>
+                            <span className="text-xs text-iner-gray">
+                              {creando === p.id
+                                ? "Creando…"
+                                : p.turbinas != null
+                                  ? `${p.turbinas} WTG`
+                                  : ""}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}

@@ -1,6 +1,6 @@
 -- =====================================================================
 -- INER Check-in — Seed
--- Países (+TZ) · empresas (6, Chile) · parques (22: 7 CL + 15 AR) ·
+-- Países (+TZ) · empresas (6, Chile) · parques (23: 7 CL + 16 AR) ·
 -- aeros generados desde parques.turbinas. Equipos AR interna (X-C, F-K).
 -- Idempotente (on conflict do update). PE/UY sin parques aún (intencional).
 -- =====================================================================
@@ -48,7 +48,8 @@ insert into public.parques (id, nombre, pais, empresa_id, turbinas, activo, orde
   ('ar_olavarria',        'PE OLAVARRIA',              'argentina', null, 22, true, 12),
   ('ar_pepe_vi',          'PE PEPE VI',                'argentina', null, 31, true, 13),
   ('ar_san_luis',         'PE San Luis',               'argentina', null, 50, true, 14),
-  ('ar_vivorata',         'PE VIVORATA',               'argentina', null, 11, true, 15)
+  ('ar_vivorata',         'PE VIVORATA',               'argentina', null, 11, true, 15),
+  ('ar_punta_lomitas',    'PE Punta Lomitas',          'argentina', null, 57, true, 16)
 on conflict (id) do update set
   nombre = excluded.nombre, pais = excluded.pais,
   empresa_id = excluded.empresa_id, turbinas = excluded.turbinas,
@@ -56,10 +57,24 @@ on conflict (id) do update set
 
 -- Aeros: se generan 1..turbinas por parque (id '{parque}_{n}', nombre 'WTG NN').
 -- Reemplazar luego por el inventario real si los aeros tienen nombres propios.
+-- Punta Lomitas se excluye acá: su numeración es salteada (ver insert explícito abajo).
 insert into public.aeros (id, parque_id, numero, nombre)
 select p.id || '_' || g, p.id, g, 'WTG ' || lpad(g::text, 2, '0')
 from public.parques p
 cross join lateral generate_series(1, coalesce(p.turbinas, 0)) as g
+where p.id <> 'ar_punta_lomitas'
+on conflict (id) do update set
+  parque_id = excluded.parque_id, numero = excluded.numero, nombre = excluded.nombre;
+
+-- Punta Lomitas: 57 aeros reales, numeración NO contigua (faltan 5,7,10,48,49;
+-- llega hasta 62). Números extraídos del Excel PLOM (hoja "Parque 1", columna WTG).
+insert into public.aeros (id, parque_id, numero, nombre)
+select 'ar_punta_lomitas_' || n, 'ar_punta_lomitas', n, 'WTG ' || lpad(n::text, 2, '0')
+from unnest(array[
+  1,2,3,4,6,8,9,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,
+  31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,50,51,52,53,54,55,56,57,
+  58,59,60,61,62
+]) as n
 on conflict (id) do update set
   parque_id = excluded.parque_id, numero = excluded.numero, nombre = excluded.nombre;
 

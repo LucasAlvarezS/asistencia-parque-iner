@@ -21,14 +21,21 @@ no técnico.
 
 ### Decisiones tomadas (clarificadas con el usuario)
 - **Eventos:** `entrada_parque`, `traslado_maquina`, `entrada_wtg`, `salida_wtg`,
-  `inicio_almuerzo`, `inicio_standby`, `finalizar_parque`. (Se eliminan `reanudar` y
-  `inicio_capacitacion` del modelo viejo; cada botón cierra el segmento anterior.)
+  `inicio_almuerzo`, `inicio_standby`, `salida_parque`, `finalizar_parque`. (Se eliminan
+  `reanudar` y `inicio_capacitacion` del modelo viejo; cada botón cierra el segmento anterior.)
+  **Dos cierres:** `salida_parque` cierra el DÍA (jornada, cuenta última turbina) y
+  `finalizar_parque` cierra el PARQUE (asignación). `traslado_maquina` se registra 1 vez/día.
 - **Stand-by motivos:** `clima`, `documentacion`, `programacion_tecnica`, `otros` (con texto).
   Se elimina `produccion`.
 - **Offline/sync:** **cola propia en IndexedDB** + service worker (PWA). Sin PowerSync.
 - **n8n:** corre 20:00 diario, agrupa por parque/país, **agrega filas a un CSV pre-estructurado**
   accesible para el equipo no técnico (destino exacto se define al montar n8n).
-- **Auth:** usuarios creados por nosotros (correo + contraseña). Sin registro público.
+- **Auth:** login por **nombre de usuario** (ej. `carlos.naretto`) + contraseña. Supabase Auth
+  exige email, así que el usuario se mapea a un **email sintético** con dominio interno fijo
+  `@checkin.iner` (oculto al técnico; no necesita existir, con "Confirm email" apagado). Las
+  cuentas las crea el admin con ese patrón. Sin registro público. Ver `lib/usuario.ts`.
+  `tecnicos` guarda el `usuario` (login, unique) + `nombre` (planilla) + `activo`; la contraseña
+  vive en `auth.users`. Alta reproducible vía `scripts/crear-tecnicos.mjs`.
 - **Zona horaria:** se **deriva del país del parque** (`TZ_POR_PAIS`). La fecha de jornada y
   el corte de las 20:00 quedan en **hora local de cada parque** (Argentina −03, Chile −04/−03,
   Perú −05, Uruguay −03).
@@ -102,23 +109,25 @@ Nuevo CHECK de `tipo`:
 ```sql
 tipo text not null check (tipo in (
   'entrada_parque','traslado_maquina','entrada_wtg','salida_wtg',
-  'inicio_almuerzo','inicio_standby','finalizar_parque'))
+  'inicio_almuerzo','inicio_standby','salida_parque','finalizar_parque'))
 ```
 Mapeo botón → evento → categoría (espejo en la vista `tramos` y en `catalogos.ts`):
 
 | Botón | `tipo` | `categoria` |
 |---|---|---|
 | Ingreso a parque | `entrada_parque` | traslado |
-| Traslado a máquina | `traslado_maquina` | traslado |
+| Traslado a máquina (1ª vez) | `traslado_maquina` | traslado |
 | Ingreso a turbina | `entrada_wtg` | productivo |
 | Salida de turbina | `salida_wtg` | traslado |
 | Almuerzo | `inicio_almuerzo` | almuerzo |
 | Stand-by | `inicio_standby` | stand_by |
-| Finalizar parque | `finalizar_parque` | (terminal, no abre tramo) |
+| Salida de parque | `salida_parque` | (terminal — cierra el día) |
+| Finalizar parque | `finalizar_parque` | (terminal — cierra el parque) |
 
 ### A3. Vista `tramos`
-Igual que hoy pero: el `case` de categoría usa el mapeo nuevo, y el terminal pasa de
-`salida_parque` a **`finalizar_parque`** (`where ... and tipo <> 'finalizar_parque'`).
+Igual que hoy pero: el `case` de categoría usa el mapeo nuevo, y los terminales
+(`salida_parque` y `finalizar_parque`) no abren tramo
+(`where ... and tipo not in ('salida_parque','finalizar_parque')`).
 
 ### A4. Motivos de stand-by
 `eventos.motivo` y `catalogos.ts`: dejar `clima`, `documentacion`, `programacion_tecnica`,
@@ -178,8 +187,8 @@ Se reutiliza casi todo lo ya generado (mover desde la carpeta hermana y adaptar)
   `sesion_parque` (asignación activa + perfil cacheados).
 - `lib/offline/registrarEvento.ts` — al apretar un botón: arma el evento con
   `id = crypto.randomUUID()`, `ts_dispositivo = ahoraISO(tzParque)` (hora/fecha exacta con el
-  offset local del parque), resuelve la jornada del día (`{tecnico_id}_{fecha}` con `fecha` en
-  TZ del parque, upsert), lo encola en `outbox` y actualiza la UI optimista. Idempotente:
+  offset local del parque), resuelve la jornada del día (`{asignacion_id}_{fecha}` con `fecha`
+  en TZ del parque, upsert), lo encola en `outbox` y actualiza la UI optimista. Idempotente:
   reintentar no duplica (PK = UUID; jornadas/asignaciones por `id`).
 - `lib/offline/sync.ts` — al estar online (`navigator.onLine` + evento `online` + reintento
   periódico): vacía `outbox` a Supabase en orden (tecnico→asignacion→jornada→eventos), con

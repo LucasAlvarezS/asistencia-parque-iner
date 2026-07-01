@@ -1,0 +1,18 @@
+[
+  {
+    "usuario": "carlos.naretto",
+    "nombre": "Carlos Naretto",
+    "subtipo": "inspector_externo",
+    "pais": "argentina",
+    "equipo_id": null,
+    "password": "CAMBIAR-esta-clave"
+  },
+  {
+    "usuario": "juan.perez",
+    "nombre": "Juan Pérez",
+    "subtipo": "interno",
+    "pais": "argentina",
+    "equipo_id": "ar_x_c",
+    "password": "CAMBIAR-esta-clave"
+  }
+]

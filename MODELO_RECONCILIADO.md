@@ -27,7 +27,7 @@ Google Sheets) está en `PLAN_N8N.md`.
 | `parques` | catálogo | `turbinas` = conteo; `empresa_id` nullable (AR sin empresa) |
 | `aeros` | **catálogo de aerogeneradores** | uno por turbina; el técnico elige el número |
 | `equipos` | equipos de inspección | **solo AR interna** (X-C, F-K) |
-| `tecnicos` | perfil 1:1 auth.users | `subtipo` interno/externo; `equipo_id` nullable |
+| `tecnicos` | perfil 1:1 auth.users | `usuario` (login, unique), `nombre` (planilla), `subtipo` interno/externo, `equipo_id` nullable, `activo`. Contraseña en `auth.users` |
 | `asignaciones` | parque activo por técnico | una activa (índice único parcial) |
 | `jornadas` | día por asignación | `id = {asignacion_id}_{fecha}`, `fecha` en TZ del país |
 | `eventos` | **append-only** | UUID, `tipo`, `maquina_id`→aero, `motivo`, `updated_at` |
@@ -37,17 +37,30 @@ Google Sheets) está en `PLAN_N8N.md`.
 | Botón / acción | `tipo` | categoría |
 |---|---|---|
 | Ingreso a parque | `entrada_parque` | traslado |
-| Traslado a aero | `traslado_maquina` | traslado |
+| Traslado a aero (1ª vez) | `traslado_maquina` | traslado |
 | Ingreso a aero (elige nº) | `entrada_wtg` | productivo |
 | Salida de aero (+3 palas) | `salida_wtg` | traslado |
 | Almuerzo | `inicio_almuerzo` | almuerzo |
 | Stand-by (motivo) | `inicio_standby` | stand_by |
-| Finalizar parque | `finalizar_parque` | terminal (no abre tramo) |
+| Salida de parque | `salida_parque` | **terminal — cierra el DÍA** |
+| Finalizar parque | `finalizar_parque` | **terminal — cierra el PARQUE** |
 
+- **`traslado_maquina` se registra una sola vez** (el primer traslado del día): marca la hora
+  real de inicio de operaciones (`inicio_actividades`). Entre máquinas es
+  `entrada_wtg → salida_wtg` sin nada intermedio.
+- **Interno y externo usan el mismo set de botones** (el externo también entra/sale de aeros —
+  ver pestaña `03. C. Naretto`). La diferencia es el **ruteo** (interno AR agrupa por equipo;
+  externo por persona) y el **ancho** de la planilla (3 WTG vs 11 AERO), no los eventos.
+- **Dos niveles de cierre** (jerarquía **asignación → jornada**):
+  - `salida_parque` = fin del **día** → cierra la **jornada** y cuenta la última turbina como
+    inspeccionada. El técnico sigue asignado (vuelve al día siguiente = nueva jornada).
+  - `finalizar_parque` = fin del **parque** → cierra la **asignación** (vuelve a onboarding);
+    si la jornada sigue abierta, también la cierra y cuenta la última WTG.
 - **Standby** arranca con `inicio_standby` (hora + motivo) a nivel día; **cualquier evento
   siguiente lo cierra** (lo calcula la vista `tramos` con `LEAD()`).
-- **Aero inspeccionado** = `entrada_wtg` con un `salida_wtg` posterior. Cada salida imputa
-  **3 palas** (regla fija; se computa en las vistas, no se almacena).
+- **Aero inspeccionado** = `entrada_wtg` con un `salida_wtg` **o un cierre**
+  (`salida_parque`/`finalizar_parque`) posterior. Cada inspección imputa **3 palas** (regla
+  fija; se computa en las vistas, no se almacena).
 - Motivos standby: `clima`, `documentacion`, `programacion_tecnica`, `otros` (texto en
   `motivo_otro`).
 
@@ -57,13 +70,27 @@ Google Sheets) está en `PLAN_N8N.md`.
   almuerzo con duración). `security_invoker` → respeta RLS de la app.
 - **`eventos_ctx`** — eventos + contexto, calcula `grupo_clave` de ruteo:
   `'equipo:<id>'` si **AR interna con equipo**, si no `'tecnico:<uuid>'`.
-- **`visitas_aero`** — pares `entrada_wtg`→`salida_wtg` con flag `inspeccionado`.
+- **`visitas_aero`** — `entrada_wtg` con su cierre (`salida_wtg` o cierre de día/parque) →
+  flag `inspeccionado`; join a `aeros` expone `numero`/`nombre` (para etiquetar/ubicar en la
+  planilla).
 - **`reporte_planilla`** — **una fila por (grupo, parque, día)**: cabecera (llegada, inicio
-  actividades = 1er traslado/entrada_wtg, colación, término, observaciones = standby +
-  comentarios) + las visitas como **JSON** (`{aero, ingreso, salida}`). n8n expande el JSON
-  a columnas WTG 1..N (evita fijar el ancho: 3 en internas, 11 en Naretto).
+  actividades = 1er traslado/entrada_wtg, colación, término = `salida_parque`/`finalizar_parque`,
+  observaciones = standby + comentarios) + las visitas como **JSON**
+  (`{aero, numero, nombre, ingreso, salida}`). n8n expande el JSON a columnas WTG 1..N (evita
+  fijar el ancho: 3 en internas, 11 en Naretto).
 - **`reporte_resumen`** — tablero por (grupo, parque): turbinas objetivo, inspeccionadas,
   pendientes, % avance, días en sitio vs productivos, % productividad, turb/día, palas.
+
+### Dos familias de reporte (misma base de eventos, distinta proyección)
+
+La diferencia **interno/externo** vive en las **vistas**, no en tablas:
+- **Interno →** `reporte_planilla` / `reporte_resumen` (formato planilla clásico).
+- **Externo →** `reporte_externo` / `reporte_externo_resumen` (**formato PLOM**, estándar para
+  todos los externos). `reporte_externo`: una fila por aero visitado con la **cadena** de tiempos
+  (`esfuerzo_inicio` = salida anterior o llegada · `parada_aero` = entrada_wtg · `traslado_min` =
+  parada − esfuerzo_inicio · `esfuerzo_final`/`inicio_aero` = salida_wtg · `salida_de_parque` ·
+  `tiempo_min` · `observacion`). Todo derivado de `entrada_parque`/`entrada_wtg`/`salida_wtg`/
+  `salida_parque` (el botón "Traslado" del externo es de UX; el reporte encadena salida→esfuerzo).
 
 ## Ruteo a la planilla (pestañas)
 

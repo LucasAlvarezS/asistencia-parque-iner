@@ -62,10 +62,12 @@ create table if not exists public.equipos (
 -- Auth (NO se guarda acá). equipo_id NULL salvo AR interna.
 create table if not exists public.tecnicos (
   id        uuid primary key references auth.users(id) on delete cascade,
-  nombre    text,
+  usuario   text unique,          -- nombre de login (ej. 'carlos.naretto'); = parte local del email sintético
+  nombre    text,                 -- nombre para la planilla (ej. 'Carlos Naretto')
   subtipo   text check (subtipo in ('interno','inspector_externo')),
   pais      text references public.paises(id),
   equipo_id text references public.equipos(id),
+  activo    boolean not null default true,   -- baja lógica sin borrar
   creado_ts timestamptz not null default now()
 );
 create index if not exists tecnicos_equipo_idx on public.tecnicos (equipo_id);
@@ -99,7 +101,7 @@ create table if not exists public.jornadas (
   subtipo      text check (subtipo in ('interno','inspector_externo')),
   estado       text not null default 'abierta'
                check (estado in ('abierta','cerrada','incompleta','anulada')),
-  cierre_tipo  text check (cierre_tipo in ('finalizar_parque','auto_2000')),
+  cierre_tipo  text check (cierre_tipo in ('salida_parque','finalizar_parque','auto_2000')),
   abierta_ts   timestamptz,
   cerrada_ts   timestamptz,
   updated_at   timestamptz not null default now()
@@ -114,7 +116,7 @@ create table if not exists public.eventos (
   jornada_id     text not null references public.jornadas(id) on delete cascade,
   tipo           text not null check (tipo in (
                    'entrada_parque','traslado_maquina','entrada_wtg','salida_wtg',
-                   'inicio_almuerzo','inicio_standby','finalizar_parque')),
+                   'inicio_almuerzo','inicio_standby','salida_parque','finalizar_parque')),
   categoria      text check (categoria in ('productivo','traslado','stand_by','almuerzo')),
   anulado        boolean not null default false,
   ts_dispositivo timestamptz not null,
@@ -144,7 +146,8 @@ create trigger eventos_touch before update on public.eventos
 -- =====================================================================
 
 -- TRAMOS — empareja eventos consecutivos no anulados (LEAD), por jornada.
--- finalizar_parque es terminal (no abre tramo). security_invoker => RLS app.
+-- salida_parque (cierre de día) y finalizar_parque (cierre de parque) son
+-- terminales: no abren tramo, pero sí cierran el tramo previo. security_invoker => RLS app.
 create or replace view public.tramos with (security_invoker = on) as
 with ord as (
   select e.*, j.fecha, j.tecnico_id, j.parque_id, j.subtipo,
@@ -171,8 +174,8 @@ select
   greatest(0, round(extract(epoch from (fin_ts - ts_dispositivo)) / 60.0))::int as duracion_min,
   maquina_id, motivo, motivo_otro, comentario
 from ord
-where fin_ts is not null            -- el último evento no abre tramo
-  and tipo <> 'finalizar_parque';   -- finalizar_parque es terminal
+where fin_ts is not null                             -- el último evento no abre tramo
+  and tipo not in ('salida_parque','finalizar_parque'); -- cierres: terminales
 
 -- eventos_ctx — eventos + contexto (grupo_clave para el ruteo de planilla).
 -- grupo_clave: 'equipo:<id>' si AR interna con equipo; si no 'tecnico:<uuid>'.
@@ -188,8 +191,10 @@ join public.tecnicos t on t.id = j.tecnico_id
 join public.parques  p on p.id = j.parque_id
 where e.anulado = false;
 
--- visitas_aero — pares entrada_wtg → (siguiente) salida_wtg.
--- inspeccionado = el ingreso tiene una salida posterior en la jornada.
+-- visitas_aero — pares entrada_wtg → (siguiente) cierre de máquina/día/parque.
+-- inspeccionado = el ingreso tiene una salida_wtg posterior, o lo cierra el fin
+-- del día (salida_parque) / del parque (finalizar_parque). Join a aeros para
+-- exponer numero/nombre (n8n etiqueta "Nombre WTG" y ubica el slot sin más queries).
 create or replace view public.visitas_aero as
 with x as (
   select ec.*,
@@ -198,13 +203,15 @@ with x as (
   from public.eventos_ctx ec
   window w as (partition by ec.jornada_id order by ec.ts_dispositivo)
 )
-select grupo_clave, pais, parque_id, parque_nombre, fecha, tecnico_id,
-       maquina_id,
-       ts_dispositivo as ingreso,
-       case when next_tipo = 'salida_wtg' then next_ts end as salida,
-       (next_tipo = 'salida_wtg') as inspeccionado
+select x.grupo_clave, x.pais, x.parque_id, x.parque_nombre, x.fecha, x.tecnico_id,
+       x.maquina_id, a.numero, a.nombre,
+       x.ts_dispositivo as ingreso,
+       case when x.next_tipo in ('salida_wtg','salida_parque','finalizar_parque')
+            then x.next_ts end as salida,
+       (x.next_tipo in ('salida_wtg','salida_parque','finalizar_parque')) as inspeccionado
 from x
-where tipo = 'entrada_wtg';
+left join public.aeros a on a.id = x.maquina_id
+where x.tipo = 'entrada_wtg';
 
 -- reporte_planilla — UNA fila por (grupo, parque, día). Cabecera + visitas
 -- como JSON (n8n las expande a columnas WTG 1..N, evitando fijar el ancho).
@@ -215,7 +222,7 @@ with cab as (
          min(ts_dispositivo) filter (where tipo = 'entrada_parque')                         as llegada,
          min(ts_dispositivo) filter (where tipo in ('traslado_maquina','entrada_wtg'))      as inicio_actividades,
          min(ts_dispositivo) filter (where tipo = 'inicio_almuerzo')                        as colacion,
-         max(ts_dispositivo) filter (where tipo = 'finalizar_parque')                       as termino,
+         max(ts_dispositivo) filter (where tipo in ('salida_parque','finalizar_parque'))     as termino,
          string_agg(distinct nullif(trim(coalesce(comentario,'')), ''), ' · ')              as comentarios,
          string_agg(distinct case when tipo = 'inicio_standby'
                                   then coalesce(motivo_otro, motivo) end, ' · ')            as standby
@@ -227,7 +234,8 @@ vis as (
          count(*) filter (where inspeccionado)                          as aeros_inspeccionados,
          3 * count(*) filter (where inspeccionado)                      as palas,
          jsonb_agg(jsonb_build_object(
-           'aero', maquina_id, 'ingreso', ingreso, 'salida', salida)
+           'aero', maquina_id, 'numero', numero, 'nombre', nombre,
+           'ingreso', ingreso, 'salida', salida)
            order by ingreso)                                            as visitas
   from public.visitas_aero
   group by grupo_clave, parque_id, fecha
@@ -283,6 +291,103 @@ select i.grupo_clave, i.pais, i.parque_id, i.parque_nombre,
 from ins i
 join obj  o on o.parque_id = i.parque_id
 join dias d on d.grupo_clave = i.grupo_clave and d.parque_id = i.parque_id;
+
+-- =====================================================================
+-- Reporte EXTERNO (formato PLOM) — misma base de eventos, otra proyección.
+-- Cadena por aero: esfuerzo_inicio (salida anterior o llegada) → parada_aero
+-- (entrada_wtg) → esfuerzo_final/inicio_aero (salida_wtg o cierre del día).
+-- =====================================================================
+create or replace view public.reporte_externo as
+with base as (   -- eventos de externos que forman la cadena, por jornada
+  select ec.jornada_id, ec.fecha, ec.grupo_clave, ec.tecnico_id, ec.pais,
+         ec.parque_id, ec.parque_nombre, ec.tipo, ec.ts_dispositivo, ec.maquina_id
+  from public.eventos_ctx ec
+  where ec.subtipo = 'inspector_externo'
+    and ec.tipo in ('entrada_parque','entrada_wtg','salida_wtg','salida_parque')
+),
+seq as (
+  select b.*,
+         lag(ts_dispositivo)  over w as prev_ts,   -- salida anterior / llegada
+         lead(ts_dispositivo) over w as next_ts,
+         lead(tipo)           over w as next_tipo
+  from base b
+  window w as (partition by jornada_id order by ts_dispositivo)
+),
+cierre as (   -- por jornada: salida de parque y última salida de aero
+  select jornada_id,
+         max(ts_dispositivo) filter (where tipo = 'salida_parque') as salida_de_parque,
+         max(ts_dispositivo) filter (where tipo = 'salida_wtg')    as ultima_salida_wtg
+  from base
+  group by jornada_id
+),
+obs as (   -- observación por jornada: standby (motivo) + comentarios (todos los eventos)
+  select ec.jornada_id,
+         nullif(concat_ws(' · ',
+           string_agg(distinct case when ec.tipo = 'inicio_standby'
+                                    then coalesce(ec.motivo_otro, ec.motivo) end, ' · '),
+           string_agg(distinct nullif(trim(coalesce(ec.comentario,'')), ''), ' · ')
+         ), '') as observacion
+  from public.eventos_ctx ec
+  where ec.subtipo = 'inspector_externo'
+  group by ec.jornada_id
+)
+select
+  s.grupo_clave, s.tecnico_id, s.pais, s.parque_id, s.parque_nombre,
+  s.fecha,
+  extract(day   from s.fecha)::int as dia,
+  extract(month from s.fecha)::int as mes,
+  extract(year  from s.fecha)::int as anio,
+  a.numero as wtg, a.nombre as wtg_nombre,
+  s.prev_ts        as esfuerzo_inicio,             -- = salida anterior (o llegada en el 1º)
+  s.ts_dispositivo as parada_aero,                 -- = entrada_wtg
+  greatest(0, round(extract(epoch from (s.ts_dispositivo - s.prev_ts)) / 60.0))::int as traslado_min,
+  case when s.next_tipo in ('salida_wtg','salida_parque') then s.next_ts end as esfuerzo_final,
+  case when s.next_tipo in ('salida_wtg','salida_parque') then s.next_ts end as inicio_aero,
+  c.salida_de_parque,
+  greatest(0, round(extract(epoch from (c.salida_de_parque - c.ultima_salida_wtg)) / 60.0))::int as tiempo_min,
+  o.observacion
+from seq s
+join public.aeros a on a.id = s.maquina_id
+left join cierre c on c.jornada_id = s.jornada_id
+left join obs    o on o.jornada_id = s.jornada_id
+where s.tipo = 'entrada_wtg';
+
+-- reporte_externo_resumen — hoja RESUMEN del externo (por grupo/parque).
+create or replace view public.reporte_externo_resumen as
+with dias as (
+  select ec.grupo_clave, ec.tecnico_id, ec.pais, ec.parque_id, ec.parque_nombre,
+         count(distinct ec.fecha) filter (where ec.tipo = 'entrada_wtg') as dias_trabajados,
+         count(distinct ec.fecha)                                        as dias_sitio,
+         min(ec.fecha) as fecha_inicio, max(ec.fecha) as fecha_termino
+  from public.eventos_ctx ec
+  where ec.subtipo = 'inspector_externo'
+  group by ec.grupo_clave, ec.tecnico_id, ec.pais, ec.parque_id, ec.parque_nombre
+),
+insp as (
+  select v.grupo_clave, v.parque_id,
+         count(distinct v.maquina_id) filter (where v.inspeccionado) as wtg
+  from public.visitas_aero v
+  group by v.grupo_clave, v.parque_id
+),
+sb as (   -- días completos de standby (con standby y sin ningún entrada_wtg)
+  select ec.grupo_clave, ec.parque_id,
+         count(distinct ec.fecha) filter (
+           where ec.tipo = 'inicio_standby'
+             and not exists (select 1 from public.eventos_ctx e2
+                             where e2.jornada_id = ec.jornada_id and e2.tipo = 'entrada_wtg')
+         ) as standby
+  from public.eventos_ctx ec
+  where ec.subtipo = 'inspector_externo'
+  group by ec.grupo_clave, ec.parque_id
+)
+select d.grupo_clave, d.tecnico_id, d.pais, d.parque_id, d.parque_nombre,
+       d.fecha_inicio, d.fecha_termino, d.dias_trabajados, d.dias_sitio,
+       coalesce(i.wtg, 0) as wtg,
+       round(coalesce(i.wtg, 0)::numeric / nullif(d.dias_trabajados, 0), 2) as prom_diario,
+       coalesce(s.standby, 0) as standby
+from dias d
+left join insp i on i.grupo_clave = d.grupo_clave and i.parque_id = d.parque_id
+left join sb   s on s.grupo_clave = d.grupo_clave and s.parque_id = d.parque_id;
 
 -- =====================================================================
 -- 5) ROW LEVEL SECURITY
@@ -370,10 +475,12 @@ create policy eventos_anular_own on public.eventos for update to authenticated
 -- =====================================================================
 revoke all on
   public.eventos_ctx, public.visitas_aero,
-  public.reporte_planilla, public.reporte_resumen
+  public.reporte_planilla, public.reporte_resumen,
+  public.reporte_externo, public.reporte_externo_resumen
   from anon, authenticated;
 
 -- Al montar n8n (ver supabase/n8n_role.sql):
 --   create role n8n_reader login password '<secreto>' nosuperuser nocreatedb nocreaterole;
 --   grant usage on schema public to n8n_reader;
---   grant select on public.reporte_planilla, public.reporte_resumen to n8n_reader;
+--   grant select on public.reporte_planilla, public.reporte_resumen,
+--                   public.reporte_externo, public.reporte_externo_resumen to n8n_reader;

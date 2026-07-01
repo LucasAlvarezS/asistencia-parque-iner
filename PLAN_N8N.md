@@ -16,8 +16,11 @@ Decisiones tomadas (ver `MODELO_RECONCILIADO.md`):
 - **Un libro Google Sheets por país** (hoy AR y CL tienen datos; estructura para los 4).
 - **Pestañas por equipo/persona** dentro del libro: ruteo
   `if subtipo='interno' and pais='argentina' → pestaña = equipo (X-C, F-K); else → técnico`.
-- **Formato ancho**: 1 fila por (grupo, parque, día); las turbinas se expanden en columnas
-  (WTG 1/2/3 en internas; AERO 1..11 en externa/Naretto) desde el JSON de visitas.
+- **Dos formatos** (misma base, distinta vista):
+  - **Interno**: formato ancho, 1 fila por (grupo, parque, día); turbinas en columnas WTG 1/2/3
+    desde el JSON `visitas` de `reporte_planilla`.
+  - **Externo**: formato **PLOM** (reemplaza al viejo Naretto de 11 AERO): 1 fila **por aero
+    visitado** con cadena de tiempos, desde `reporte_externo` (+ hoja RESUMEN). Ver más abajo.
 - **Auth Google: OAuth2** (credencial Google Sheets OAuth2 en n8n).
 - **Corte 20:00 hora local de cada país** (TZ de `paises.tz`).
 - **Arquitectura: BD → Google Sheets, sin CSV intermedio.** La base es la fuente de verdad;
@@ -32,7 +35,8 @@ Decisiones tomadas (ver `MODELO_RECONCILIADO.md`):
 - **`public.reporte_planilla`** — una fila por (grupo, parque, día). Cabecera: `dia/mes/anio`,
   `parque_nombre`, `llegada`, `inicio_actividades`, `colacion`, `termino`, `observaciones`,
   `aeros_inspeccionados`, `palas`, y `visitas` (**JSON** ordenado de
-  `{aero, ingreso, salida}`). Trae `grupo_clave`, `equipo_id`, `subtipo`, `pais` para el ruteo.
+  `{aero, numero, nombre, ingreso, salida}`). Trae `grupo_clave`, `equipo_id`, `subtipo`,
+  `pais` para el ruteo. `termino` = último `salida_parque`/`finalizar_parque` del día.
 - **`public.reporte_resumen`** — tablero por (grupo, parque): `turbinas_objetivo`,
   `inspeccionadas`, `pendientes`, `pct_avance`, `dias_sitio`, `dias_productivos`,
   `pct_productividad`, `turb_dia`, `palas`.
@@ -76,17 +80,107 @@ duplican**; si cambian los eventos del día (p.ej. una anulación), la fila se *
 
 ---
 
+## Mapa de columnas real por pestaña (planilla legada)
+
+Derivado de los CSV en `csv/`. **Las pestañas NO comparten layout**: interna y externa
+difieren en orden de columnas y en qué columnas existen. Por eso el nodo Function lleva un
+**mapa por plantilla** y el Switch elige *plantilla + hoja* según `grupo_clave`. Todas las
+horas se formatean a la **TZ local del país** (`paises.tz`), formato `HH:MM`.
+
+### Plantilla INTERNA — `01. Equipo X-C`, `02. Equipo F-K` (máx 3 WTG/día)
+Orden exacto (+ `row_key` como columna **oculta** de match, p.ej. al final o col A):
+`N° · Día · Mes · Año · Parque Eólico · llegada subestación · Inicio de actividades ·
+[Tras. WTG i · Ingreso WTG i · Salida WTG i] × i=1..3 · Colación · Hora de termino ·
+Nombre WTG · WTG 1 · WTG 2 · WTG 3 · Palas insp · Observaciones`
+
+Mapeo desde `reporte_planilla`:
+| Columna hoja | Origen |
+|---|---|
+| Día / Mes / Año | `dia` / `mes` / `anio` |
+| Parque Eólico | `parque_nombre` |
+| llegada subestación | `llegada` |
+| Inicio de actividades | `inicio_actividades` |
+| Ingreso WTG i / Salida WTG i | `visitas[i-1].ingreso` / `.salida` |
+| Tras. WTG i | *(sin origen: `traslado_maquina` es 1×/día, ya reflejado en Inicio de actividades — se deja vacío)* |
+| Colación | `colacion` |
+| Hora de termino | `termino` |
+| Nombre WTG | `visitas[i-1].nombre` en el slot i (ej. `WTG 04`) |
+| WTG 1 / WTG 2 / WTG 3 | `1` si `visitas[i-1]` está inspeccionado, si no vacío |
+| Palas insp | `palas` (3 × aeros inspeccionados) |
+| Observaciones | `observaciones` (standby + comentarios) |
+
+### Plantilla EXTERNA — formato **PLOM** (estándar para TODOS los externos)
+> **Reemplaza** al viejo layout ancho de Naretto (11 AERO). El externo usa un archivo con una
+> hoja **RESUMEN** + una **hoja de detalle por parque**. Fuente: vistas `reporte_externo`
+> (detalle) y `reporte_externo_resumen` (RESUMEN). Ejemplo: `Horas OT PLOM junio 2026.xlsx`.
+
+**Detalle** — **una fila por aero visitado** (no por día): agrupadas por día. Columnas y origen
+(desde `reporte_externo`; horas formateadas a TZ local, duraciones desde `*_min`):
+| Columna hoja | Origen |
+|---|---|
+| Fecha / Cant de WTG | `fecha` / count de filas del día |
+| WTG | `wtg` (nº de aero) |
+| Esfuerzo Inicio | `esfuerzo_inicio` |
+| Traslado | `traslado_min` |
+| Parada de aero | `parada_aero` |
+| Esfuerzo final / Inicio Aero | `esfuerzo_final` (= `inicio_aero`) |
+| Salida de parque | `salida_de_parque` (solo última fila del día) |
+| Tiempo | `tiempo_min` (solo última fila del día) |
+| Observacion | `observacion` |
+
+**RESUMEN** — una fila por (grupo/parque) desde `reporte_externo_resumen`:
+`Parque · Fecha Inicio · Fecha Término · Días Trabajados · WTG · Prom Diario · Stand by`
+← `parque_nombre · fecha_inicio · fecha_termino · dias_trabajados · wtg · prom_diario · standby`.
+
+Ruteo del externo: `grupo_clave = 'tecnico:<uuid>'` → hoja del técnico/parque. `row_key` sugerida
+para el detalle: `grupo_clave|parque_id|fecha|wtg` (idempotencia por aero-día).
+
+### Pestaña `Resumen` (desde `reporte_resumen`)
+Dos tablas lado a lado (Inspección **interna** | **externa**) + bloque "Desempeño por Equipo":
+| Columna hoja | Origen |
+|---|---|
+| Equipo | `equipo_id` (interna) / técnico (externa) |
+| Parque | `parque_nombre` |
+| Turbinas a Inspeccionar / Turb. Obj. | `turbinas_objetivo` |
+| Turbinas Inspeccionadas / Inspecc. | `inspeccionadas` |
+| WTG Pend / Pend. | `pendientes` |
+| % Avance | `pct_avance` |
+| Tiempo Total (Días) / Días Sitio | `dias_sitio` |
+| Días Prod. | `dias_productivos` |
+| % Prod. | `pct_productividad` |
+| Turb/Día | `turb_dia` |
+| Promedio Palas Inspeccionadas | `palas` / `inspeccionadas` |
+| Informes NL | *(sin origen en eventos → carga manual)* |
+
+### Notas de mapeo
+- **Ruteo (Switch):** `grupo_clave` decide plantilla + hoja. Interna `equipo:<id>` → mapa
+  **equipo→hoja** (X-C/F-K); externa `tecnico:<uuid>` → mapa **técnico→hoja** (Naretto). n8n
+  necesita **ambos mapas** + el mapa **país→spreadsheetId**.
+- **`N°`** es un correlativo cosmético de la planilla; no lo toca n8n (o se setea por posición).
+- **Overflow** (>3 interna / >11 externa en un día): política = fila extra con mismo `row_key`
+  sufijado o truncar + marcar en `Observaciones`. Hoy la operación real es ~1 aero/día en interna.
+- El DB es **más rico** que la planilla: si algún día se quieren llenar los `Tras.` por-aero,
+  bastaría registrar `traslado_maquina` por máquina (hoy es 1×/día por decisión operativa).
+
+---
+
 ## Parte A — Backend Supabase
 
 Ya cubierto en `supabase/migrations/0001_init.sql`:
 - Vistas `reporte_planilla` y `reporte_resumen` (pivot + tablero).
 - `eventos.updated_at` con trigger (captura anulaciones; alto-agua opcional para incremental).
 
-Falta solo el **rol de solo lectura** para n8n (`supabase/n8n_role.sql`, al montar n8n):
+Vistas de reporte, **dos familias** (misma base de eventos):
+- **Interno:** `reporte_planilla` / `reporte_resumen` (planilla legada AR por equipo/persona).
+- **Externo:** `reporte_externo` / `reporte_externo_resumen` (**formato PLOM**, ver §"Plantilla
+  EXTERNA" arriba). Estándar para todos los externos.
+
+Falta solo el **rol de solo lectura** para n8n — ya versionado en **`supabase/n8n_role.sql`**:
 ```sql
-create role n8n_reader login password '<secreto>' nosuperuser nocreatedb nocreaterole;
+create role n8n_reader login password '<secreto>' nosuperuser nocreatedb nocreaterole nobypassrls;
 grant usage on schema public to n8n_reader;
-grant select on public.reporte_planilla, public.reporte_resumen to n8n_reader;
+grant select on public.reporte_planilla, public.reporte_resumen,
+                public.reporte_externo, public.reporte_externo_resumen to n8n_reader;
 ```
 Conexión: cadena Postgres de Supabase (pooler sesión, 5432) con `n8n_reader`.
 
