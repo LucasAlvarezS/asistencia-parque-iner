@@ -33,7 +33,7 @@ datos** (un log de eventos + vistas derivadas):
   idempotente (no PowerSync).
 - **Deploy previsto:** Vercel (app) + Supabase cloud. Repo en **Gitea self-hosted**
   (`100.127.72.128`, Tailscale). **n8n** self-hosted (a montar).
-- **Claves (`.env.local`, GITIGNOREADO — recrear en cada dispositivo):**
+- **Claves (`.env`, GITIGNOREADO — recrear en cada dispositivo):**
   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (= `sb_publishable_...`),
   `SUPABASE_SERVICE_ROLE_KEY` (= `sb_secret_...`). Formato nuevo de claves Supabase (`sb_*`).
   Pedirle las claves al dueño del proyecto; no están versionadas.
@@ -164,7 +164,7 @@ verificación, orden de ejecución).
 
 ```bash
 npm install
-# .env.local con las 3 claves de Supabase (pedirlas; está gitignoreado)
+# .env con las 3 claves de Supabase (pedirlas; está gitignoreado)
 npm run dev        # http://localhost:3000
 npm run build      # ⚠ NO buildear con el dev server corriendo (corrompe .next; si pasa: rm -rf .next)
 ```
@@ -172,7 +172,7 @@ npm run build      # ⚠ NO buildear con el dev server corriendo (corrompe .next
 - **Aplicar cambios de esquema:** re-ejecutar `supabase/migrations/0001_init.sql` en el SQL Editor
   (idempotente). Tras crear vistas, correr `NOTIFY pgrst, 'reload schema';`.
 - **Alta de técnicos:** `scripts/README.md` → completar `scripts/tecnicos.json` (gitignoreado) →
-  `node --env-file=.env.local scripts/crear-tecnicos.mjs`. Genera contraseñas temporales.
+  `node --env-file=.env scripts/crear-tecnicos.mjs`. Genera contraseñas temporales.
 - **Técnicos ya creados (10):** internos AR `carlos.rodriguez`, `xavier.leon` (X-C),
   `kevin.digoy`, `fernando.avila` (F-K); externo AR `carlos.naretto`; externos CL
   `tomas.caballero`, `nicolas.caballero`, `lucas.alvarez`, `matias.ramos`, `matias.jofre`.

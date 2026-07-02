@@ -10,7 +10,8 @@ no técnico.
 ## Setup
 
 1. `npm install`
-2. Copiar `.env.local.example` → `.env.local` y completar las claves de Supabase.
+2. Crear un `.env` (gitignoreado) con las claves de Supabase: `NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` (esta última solo para scripts).
 3. En Supabase (SQL Editor), ejecutar en orden:
    - `supabase/migrations/0001_init.sql`
    - `supabase/seed.sql`

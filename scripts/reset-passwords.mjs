@@ -1,12 +1,15 @@
-// Alta reproducible de técnicos: crea la cuenta en Supabase Auth
-// (usuario@checkin.iner, email_confirm sí) + la fila en public.tecnicos.
+// Reset de contraseñas de técnicos ya existentes en Supabase Auth.
+// Para cada usuario de scripts/tecnicos.json: busca su cuenta por email
+// (usuario@checkin.iner) y le setea una contraseña nueva. Si el técnico trae
+// `password` no nulo en el JSON, usa esa; si está en null, genera una temporal
+// (`Iner-xxxxxx`) y la imprime al final para repartir.
 //
 // Uso:
-//   1) Copiá scripts/tecnicos.example.json → scripts/tecnicos.json y completá la lista.
-//   2) node --env-file=.env scripts/crear-tecnicos.mjs
+//   node --env-file=.env scripts/reset-passwords.mjs            (todos)
+//   node --env-file=.env scripts/reset-passwords.mjs matias.ramos carlos.naretto
 //
 // Requiere en el entorno: NEXT_PUBLIC_SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.
-// Idempotente: si el usuario ya existe, reusa su id y actualiza el perfil (no duplica).
+// No modifica el perfil (public.tecnicos), solo la contraseña de Auth. Idempotente.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -33,7 +36,7 @@ const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !serviceKey) {
   console.error(
     "Falta NEXT_PUBLIC_SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY.\n" +
-      "Corré:  node --env-file=.env scripts/crear-tecnicos.mjs",
+      "Corré:  node --env-file=.env scripts/reset-passwords.mjs",
   );
   process.exit(1);
 }
@@ -53,6 +56,16 @@ if (!Array.isArray(tecnicos) || tecnicos.length === 0) {
   process.exit(1);
 }
 
+// Filtro opcional por CLI: solo estos usuarios (normalizados). Sin args → todos.
+const filtro = new Set(process.argv.slice(2).map((a) => a.trim().toLowerCase()));
+if (filtro.size > 0) {
+  tecnicos = tecnicos.filter((t) => filtro.has(String(t.usuario).trim().toLowerCase()));
+  if (tecnicos.length === 0) {
+    console.error("Ningún usuario del filtro coincide con scripts/tecnicos.json.");
+    process.exit(1);
+  }
+}
+
 const supabase = createClient(url, serviceKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -69,73 +82,43 @@ async function buscarIdPorEmail(email) {
   return null;
 }
 
-let creados = 0;
-let actualizados = 0;
+let resueltos = 0;
 let fallidos = 0;
-const generadas = []; // {usuario, password} de cuentas nuevas con clave autogenerada
+const nuevas = []; // {usuario, password} para repartir
 
 for (const t of tecnicos) {
-  const { usuario, nombre, subtipo, pais, equipo_id } = t;
+  const usuario = t.usuario;
   if (!usuario) {
     console.error("✗ (sin usuario) — falta 'usuario', se saltea.");
     fallidos++;
     continue;
   }
-  const password = t.password || generarPassword();
-  const passwordGenerada = !t.password;
   const email = usuarioAEmail(usuario);
+  const password = t.password || generarPassword();
 
   try {
-    let id;
-    const { data, error } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { usuario },
-    });
-    if (error) {
-      // Ya existe: reusar su id y actualizar el perfil.
-      if (/registered|exist/i.test(error.message)) {
-        id = await buscarIdPorEmail(email);
-        if (!id) throw new Error(`existe pero no lo encontré: ${error.message}`);
-      } else {
-        throw error;
-      }
-    } else {
-      id = data.user.id;
+    const id = await buscarIdPorEmail(email);
+    if (!id) {
+      console.error(`✗ ${usuario} — no existe en Auth (creá la cuenta con crear-tecnicos.mjs).`);
+      fallidos++;
+      continue;
     }
+    const { error } = await supabase.auth.admin.updateUserById(id, { password });
+    if (error) throw error;
 
-    const { error: perfilError } = await supabase.from("tecnicos").upsert(
-      {
-        id,
-        usuario: String(usuario).trim().toLowerCase(),
-        nombre: nombre ?? usuario,
-        subtipo: subtipo ?? null,
-        pais: pais ?? null,
-        equipo_id: equipo_id ?? null,
-      },
-      { onConflict: "id" },
-    );
-    if (perfilError) throw perfilError;
-
-    if (data?.user) {
-      console.log(`✓ creado    ${usuario} (${email})`);
-      creados++;
-      if (passwordGenerada) generadas.push({ usuario, password });
-    } else {
-      console.log(`↻ actualizado ${usuario} (${email})`);
-      actualizados++;
-    }
+    console.log(`✓ reseteado ${usuario} (${email})`);
+    nuevas.push({ usuario, password });
+    resueltos++;
   } catch (err) {
     console.error(`✗ ${usuario} — ${err.message ?? err}`);
     fallidos++;
   }
 }
 
-if (generadas.length > 0) {
-  console.log("\n== Contraseñas temporales generadas (repartir y luego cambiar) ==");
-  for (const g of generadas) console.log(`   ${g.usuario.padEnd(20)} ${g.password}`);
+if (nuevas.length > 0) {
+  console.log("\n== Contraseñas nuevas (repartir y pedir cambio en el primer ingreso) ==");
+  for (const g of nuevas) console.log(`   ${g.usuario.padEnd(20)} ${g.password}`);
 }
 
-console.log(`\nListo. Creados: ${creados} · Actualizados: ${actualizados} · Fallidos: ${fallidos}`);
+console.log(`\nListo. Reseteados: ${resueltos} · Fallidos: ${fallidos}`);
 process.exit(fallidos > 0 ? 1 : 0);

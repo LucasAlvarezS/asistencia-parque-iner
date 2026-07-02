@@ -27,9 +27,9 @@ solo en SQL. Este script crea, de forma reproducible: la cuenta en Auth (`usuari
 
    > `scripts/tecnicos.json` está **gitignoreado** (tiene contraseñas). Nunca lo subas.
 
-2. Corré el script (Node 20+; lee las claves de `.env.local`):
+2. Corré el script (Node 20+; lee las claves de `.env`):
    ```
-   node --env-file=.env.local scripts/crear-tecnicos.mjs
+   node --env-file=.env scripts/crear-tecnicos.mjs
    ```
 
 3. Verificá en Supabase: los usuarios aparecen en **Authentication → Users** y en la tabla
@@ -37,3 +37,19 @@ solo en SQL. Este script crea, de forma reproducible: la cuenta en Auth (`usuari
 
 El script es **idempotente**: si un usuario ya existe, reusa su id y actualiza el perfil (no
 duplica). El técnico luego entra en la app escribiendo solo `carlos.naretto` + su contraseña.
+
+## Reset de contraseñas
+
+Si se perdieron las contraseñas temporales (el alta las imprime **una sola vez** y no se guardan),
+`reset-passwords.mjs` las regenera para cuentas ya existentes:
+
+```
+node --env-file=.env scripts/reset-passwords.mjs                 # todas
+node --env-file=.env scripts/reset-passwords.mjs matias.ramos    # solo esos usuarios
+```
+
+- Lee la misma `scripts/tecnicos.json`. Para cada técnico con `password: null` genera una nueva
+  `Iner-xxxxxx`; si el JSON trae un `password`, usa ese. Imprime la lista final para repartir.
+- Solo cambia la contraseña de **Auth** (no toca `public.tecnicos`). No crea cuentas: si un usuario
+  no existe, lo reporta y hay que darlo de alta con `crear-tecnicos.mjs`.
+- Requiere `NEXT_PUBLIC_SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` en `.env`.

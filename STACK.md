@@ -75,7 +75,7 @@ n8n vuelca vistas SQL a la planilla Google Sheets que usa el equipo no técnico.
 | `SUPABASE_SERVICE_ROLE_KEY` | **solo server** | Salta RLS (seed, tareas admin). Nunca `NEXT_PUBLIC_` |
 | cadena Postgres pooler (`n8n_reader`) | n8n | Lectura de `reporte_*` (rol read-only, otra sesión) |
 
-- **Local:** `.env.local` (ver `.env.local.example`).
+- **Local:** `.env` (gitignoreado).
 - **Vercel:** las tres primeras como env vars del proyecto (Production + Preview).
 
 ## 5. Riesgos del stack (mitigaciones)
