@@ -9,12 +9,14 @@ import {
   type PaisConfig,
   STANDBY_MOTIVOS,
   STANDBY_MOTIVO_LABEL,
+  SUBTIPO,
   type StandbyMotivo,
   type Subtipo,
   botonesDe,
   labelEvento,
   paisConfigDe,
 } from "@/lib/catalogos";
+import { comandoLegado } from "@/lib/compartir";
 import { fechaHoy } from "@/lib/tiempo";
 import { createClient } from "@/lib/supabase/client";
 import { registrarEvento } from "@/lib/offline/registrarEvento";
@@ -26,6 +28,10 @@ import {
   getTiposJornada,
 } from "@/lib/offline/estado";
 import {
+  leerAeroActual,
+  leerInspeccionados,
+} from "@/lib/offline/inspeccionados";
+import {
   type AeroCache,
   type AsignacionCache,
   leerAeros,
@@ -35,10 +41,28 @@ import {
   limpiarSesion,
 } from "@/lib/offline/sesion";
 import { sync } from "@/lib/offline/sync";
+import { ModalCompartir, ModalEvidencia } from "./Evidencia";
+import { Overlay } from "./Overlay";
+import { type DatosResumen, ModalResumenDia } from "./ResumenDia";
 import { SyncIndicator } from "./SyncIndicator";
 
 // Acciones que abren un modal antes de registrar.
-type Modal = null | "aero" | "standby" | "salida" | "finalizar" | "logout";
+type Modal =
+  | null
+  | "aero"
+  | "evidencia-stop"
+  | "evidencia-run"
+  | "standby"
+  | "salida"
+  | "finalizar"
+  | "logout";
+
+// Evidencia registrada lista para compartir por WhatsApp.
+interface Compartible {
+  texto: string;
+  blob: Blob | null;
+  nombreArchivo: string;
+}
 
 export function CheckIn({
   onFinalizado,
@@ -49,6 +73,7 @@ export function CheckIn({
 }) {
   const [asignacion, setAsignacion] = useState<AsignacionCache | null>(null);
   const [subtipo, setSubtipo] = useState<Subtipo | null>(null);
+  const [nombreTecnico, setNombreTecnico] = useState<string | null>(null);
   const [paisConfig, setPaisConfig] = useState<PaisConfig>(PAIS_CONFIG_DEFAULT);
   const [aeros, setAeros] = useState<AeroCache[]>([]);
   const [estado, setEstado] = useState<EstadoJornada>(ESTADO_INICIAL);
@@ -56,6 +81,14 @@ export function CheckIn({
   const [busy, setBusy] = useState(false);
   const [ultimo, setUltimo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Flujo externo STOP/RUN:
+  const [aeroElegido, setAeroElegido] = useState<AeroCache | null>(null); // STOP pendiente de foto
+  const [aeroActual, setAeroActual] = useState<AeroCache | null>(null); // STOP registrado sin RUN
+  const [compartir, setCompartir] = useState<Compartible | null>(null);
+  const [resumen, setResumen] = useState<DatosResumen | null>(null);
+  const [resumenEsFinal, setResumenEsFinal] = useState(false);
+
+  const externo = subtipo === SUBTIPO.INSPECTOR_EXTERNO;
 
   useEffect(() => {
     (async () => {
@@ -66,11 +99,16 @@ export function CheckIn({
       ]);
       setAsignacion(a ?? null);
       setSubtipo(perfil?.subtipo ?? null);
+      setNombreTecnico(perfil?.nombre ?? null);
       setPaisConfig(paisConfigDe(a?.pais ?? perfil?.pais, cfg));
       if (a) {
-        setAeros((await leerAeros(a.parque_id)) ?? []);
+        const lista = (await leerAeros(a.parque_id)) ?? [];
+        setAeros(lista);
         const jornadaId = `${a.id}_${fechaHoy(a.tz)}`;
         setEstado(estadoDesdeEventos(await getTiposJornada(jornadaId)));
+        // Reconstruye el aero con STOP abierto (sobrevive recargas).
+        const abierto = await leerAeroActual(jornadaId);
+        setAeroActual(lista.find((x) => x.id === abierto) ?? null);
       }
     })();
   }, []);
@@ -78,8 +116,8 @@ export function CheckIn({
   async function registrar(
     input: Parameters<typeof registrarEvento>[0],
     feedback: string,
-  ) {
-    if (busy) return;
+  ): Promise<Awaited<ReturnType<typeof registrarEvento>> | null> {
+    if (busy) return null;
     setBusy(true);
     setError(null);
     try {
@@ -91,11 +129,73 @@ export function CheckIn({
       })}`);
       setModal(null);
       void sync();
-      if (input.tipo === EVENTO_TIPO.FINALIZAR_PARQUE) onFinalizado();
+      // El externo ve primero el resumen del día; onFinalizado() se difiere al
+      // cierre de ese modal (ver ModalResumenDia).
+      if (input.tipo === EVENTO_TIPO.FINALIZAR_PARQUE && !externo) onFinalizado();
+      return res;
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo registrar el evento.");
+      return null;
     } finally {
       window.setTimeout(() => setBusy(false), 700); // debounce anti doble toque
+    }
+  }
+
+  /** Snapshot del resumen del externo. Se toma ANTES de registrar el cierre
+   *  (finalizar_parque limpia el acumulado y la asignación local). */
+  async function armarResumen(cierraTurbina: boolean): Promise<DatosResumen | null> {
+    if (!externo || !asignacion) return null;
+    const ids = new Set(await leerInspeccionados(asignacion.id));
+    if (cierraTurbina && estado.enTurbina && aeroActual) ids.add(aeroActual.id);
+    const numeros = aeros
+      .filter((a) => ids.has(a.id))
+      .map((a) => a.numero)
+      .sort((x, y) => x - y);
+    const total = asignacion.turbinas ?? aeros.length;
+    const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
+    return {
+      tecnico: nombreTecnico ?? "—",
+      parque: asignacion.parque_nombre,
+      fecha: `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`,
+      numeros,
+      restantes: Math.max(0, total - numeros.length),
+    };
+  }
+
+  /** Cierre del día/parque: para el externo arma y muestra el resumen copiable. */
+  async function cerrar(tipo: EventoTipo) {
+    const datos = await armarResumen(true);
+    const res = await registrar({ tipo }, etq(tipo));
+    if (res && datos) {
+      setResumen(datos);
+      setResumenEsFinal(tipo === EVENTO_TIPO.FINALIZAR_PARQUE);
+    }
+  }
+
+  /** STOP/RUN del externo con evidencia: registra y ofrece compartir. */
+  async function registrarConEvidencia(
+    tipo: EventoTipo,
+    aero: AeroCache,
+    foto: Blob | null,
+  ) {
+    const esStop = tipo === EVENTO_TIPO.ENTRADA_WTG;
+    const res = await registrar(
+      {
+        tipo,
+        maquinaId: esStop ? aero.id : undefined,
+        foto: foto ?? undefined,
+      },
+      `${etq(tipo)} · ${aero.nombre ?? `WTG ${aero.numero}`}`,
+    );
+    if (!res) return;
+    setAeroActual(esStop ? aero : null);
+    setAeroElegido(null);
+    if (foto) {
+      setCompartir({
+        texto: comandoLegado(esStop ? "stop" : "run", aero.numero, res.ts),
+        blob: foto,
+        nombreArchivo: `${esStop ? "stop" : "run"}-wtg-${aero.numero}.jpg`,
+      });
     }
   }
 
@@ -155,16 +255,23 @@ export function CheckIn({
           </p>
         )}
 
-        {/* Entrada a aero/turbina (elige aero) — destacado */}
+        {/* Destacado: entrada a aero (elige aero). Externo: alterna STOP/RUN. */}
         <button
           type="button"
-          disabled={busy || !on(botones.destacado)}
-          onClick={() => setModal("aero")}
+          disabled={
+            busy ||
+            !on(externo && estado.enTurbina ? EVENTO_TIPO.SALIDA_WTG : botones.destacado)
+          }
+          onClick={() =>
+            setModal(externo && estado.enTurbina ? "evidencia-run" : "aero")
+          }
           className="w-full rounded-xl bg-iner-green px-4 py-5 text-center text-base font-bold text-white shadow-sm transition hover:bg-iner-green-700 disabled:opacity-50"
         >
-          {etq(botones.destacado)}
+          {externo && estado.enTurbina
+            ? `${etq(EVENTO_TIPO.SALIDA_WTG)}${aeroActual ? ` · ${aeroActual.nombre ?? `WTG ${aeroActual.numero}`}` : ""}`
+            : etq(botones.destacado)}
         </button>
-        {estado.enTraslado && !estado.enTurbina && (
+        {!externo && estado.enTraslado && !estado.enTurbina && (
           <p className="-mt-2 text-center text-xs text-iner-gray">
             En traslado — ahora registrá <strong>{etq(EVENTO_TIPO.ENTRADA_WTG)}</strong>.
           </p>
@@ -223,11 +330,44 @@ export function CheckIn({
         <ModalAero
           aeros={aeros}
           onCerrar={() => setModal(null)}
-          onElegir={(aero) =>
-            registrar(
-              { tipo: EVENTO_TIPO.ENTRADA_WTG, maquinaId: aero.id },
-              `${etq(EVENTO_TIPO.ENTRADA_WTG)} · ${aero.nombre ?? aero.numero}`,
-            )
+          onElegir={(aero) => {
+            if (externo) {
+              // El STOP del externo lleva foto de evidencia antes de registrar.
+              setAeroElegido(aero);
+              setModal("evidencia-stop");
+            } else {
+              void registrar(
+                { tipo: EVENTO_TIPO.ENTRADA_WTG, maquinaId: aero.id },
+                `${etq(EVENTO_TIPO.ENTRADA_WTG)} · ${aero.nombre ?? aero.numero}`,
+              );
+            }
+          }}
+        />
+      )}
+      {modal === "evidencia-stop" && aeroElegido && (
+        <ModalEvidencia
+          titulo={`STOP · ${aeroElegido.nombre ?? `WTG ${aeroElegido.numero}`}`}
+          subtitulo="Sacá una foto de la pantalla con el aero detenido."
+          textoOk="Registrar STOP"
+          busy={busy}
+          onCerrar={() => {
+            setAeroElegido(null);
+            setModal(null);
+          }}
+          onConfirmar={(foto) =>
+            void registrarConEvidencia(EVENTO_TIPO.ENTRADA_WTG, aeroElegido, foto)
+          }
+        />
+      )}
+      {modal === "evidencia-run" && aeroActual && (
+        <ModalEvidencia
+          titulo={`RUN · ${aeroActual.nombre ?? `WTG ${aeroActual.numero}`}`}
+          subtitulo="Inspección terminada: sacá una foto de la pantalla con el aero en marcha."
+          textoOk="Registrar RUN"
+          busy={busy}
+          onCerrar={() => setModal(null)}
+          onConfirmar={(foto) =>
+            void registrarConEvidencia(EVENTO_TIPO.SALIDA_WTG, aeroActual, foto)
           }
         />
       )}
@@ -249,9 +389,7 @@ export function CheckIn({
           detalle="Cierra la jornada de hoy y cuenta la última turbina como inspeccionada. Podés volver mañana al mismo parque."
           textoOk="Registrar salida"
           onCerrar={() => setModal(null)}
-          onOk={() =>
-            registrar({ tipo: EVENTO_TIPO.SALIDA_PARQUE }, etq(EVENTO_TIPO.SALIDA_PARQUE))
-          }
+          onOk={() => void cerrar(EVENTO_TIPO.SALIDA_PARQUE)}
         />
       )}
       {modal === "finalizar" && (
@@ -261,9 +399,7 @@ export function CheckIn({
           detalle="Cierra el parque por completo y termina la asignación. Volverás a elegir un parque nuevo. Usá esto solo cuando la inspección esté terminada."
           textoOk="Finalizar parque"
           onCerrar={() => setModal(null)}
-          onOk={() =>
-            registrar({ tipo: EVENTO_TIPO.FINALIZAR_PARQUE }, etq(EVENTO_TIPO.FINALIZAR_PARQUE))
-          }
+          onOk={() => void cerrar(EVENTO_TIPO.FINALIZAR_PARQUE)}
         />
       )}
       {modal === "logout" && (
@@ -275,21 +411,31 @@ export function CheckIn({
           onOk={cerrarSesion}
         />
       )}
+
+      {/* Post-registro (externo): compartir evidencia y resumen de fin de día. */}
+      {compartir && (
+        <ModalCompartir
+          texto={compartir.texto}
+          blob={compartir.blob}
+          nombreArchivo={compartir.nombreArchivo}
+          onCerrar={() => setCompartir(null)}
+        />
+      )}
+      {resumen && !compartir && (
+        <ModalResumenDia
+          datos={resumen}
+          esFinal={resumenEsFinal}
+          onCerrar={() => {
+            setResumen(null);
+            if (resumenEsFinal) onFinalizado();
+          }}
+        />
+      )}
     </main>
   );
 }
 
 // ---------- Modales ----------
-
-function Overlay({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
-      <div className="w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl">
-        {children}
-      </div>
-    </div>
-  );
-}
 
 function ModalAero({
   aeros,

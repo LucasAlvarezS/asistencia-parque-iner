@@ -4,6 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ESTADO_ASIGNACION, PAIS_LABEL, type Pais, TZ_POR_PAIS } from "@/lib/catalogos";
 import {
+  type EventoParaSiembra,
+  inspeccionadosDesdeEventos,
+  sembrarInspeccionados,
+} from "@/lib/offline/inspeccionados";
+import {
   type AeroCache,
   type ParqueCache,
   type PaisesConfig,
@@ -40,7 +45,22 @@ export function Onboarding({ onReady }: { onReady: () => void }) {
         pais: p.pais,
         tz: TZ_POR_PAIS[p.pais],
         inicio_ts: a.inicio_ts,
+        turbinas: p.turbinas ?? null,
       });
+      // Siembra el acumulado de inspeccionados (resumen del externo) desde el
+      // server: cubre dispositivo nuevo o cache borrado con asignación en curso.
+      const { data: evs } = await supabase
+        .from("eventos")
+        .select("tipo, maquina_id, ts_dispositivo, jornada_id, jornadas!inner(asignacion_id)")
+        .eq("jornadas.asignacion_id", a.id)
+        .in("tipo", ["entrada_wtg", "salida_wtg", "salida_parque", "finalizar_parque"])
+        .order("ts_dispositivo");
+      if (evs) {
+        await sembrarInspeccionados(
+          a.id,
+          inspeccionadosDesdeEventos(evs as unknown as EventoParaSiembra[]),
+        );
+      }
       return true;
     },
     [],
@@ -145,6 +165,7 @@ export function Onboarding({ onReady }: { onReady: () => void }) {
         pais: p.pais,
         tz: TZ_POR_PAIS[p.pais],
         inicio_ts,
+        turbinas: p.turbinas ?? null,
       });
       onReady();
     } catch (err) {
