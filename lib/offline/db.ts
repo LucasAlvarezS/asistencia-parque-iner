@@ -1,5 +1,6 @@
-// Capa offline — IndexedDB (lib `idb`). Tres stores:
+// Capa offline — IndexedDB (lib `idb`). Cuatro stores:
 //   outbox   mutaciones pendientes de sincronizar (jornadas / eventos / asignaciones)
+//   fotos    evidencias JPEG pendientes de subir a Storage (blob por evento)
 //   catalogo parques + aeros del parque activo (cacheados para uso offline)
 //   sesion   perfil del técnico + asignación activa (cacheados)
 //
@@ -10,7 +11,7 @@
 import { type DBSchema, type IDBPDatabase, openDB } from "idb";
 
 export const DB_NOMBRE = "iner-checkin";
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export type Tabla = "asignaciones" | "jornadas" | "eventos";
 
@@ -24,8 +25,18 @@ export interface OutboxItem {
   creado_ts: string;
 }
 
+/** Evidencia pendiente de subir a Supabase Storage (bucket `evidencias`).
+ *  Se sube en sync() DESPUÉS de que su evento salió de la outbox. */
+export interface FotoPendiente {
+  evento_id: string; // = eventos.id (key del store)
+  path: string; // "{tecnico_id}/{evento_id}.jpg" dentro del bucket
+  blob: Blob; // JPEG ya comprimido (IndexedDB serializa Blobs nativamente)
+  creado_ts: string;
+}
+
 interface CheckinDB extends DBSchema {
   outbox: { key: string; value: OutboxItem; indexes: { by_seq: number } };
+  fotos: { key: string; value: FotoPendiente };
   catalogo: { key: string; value: unknown };
   sesion: { key: string; value: unknown };
 }
@@ -39,6 +50,9 @@ export function abrirDB(): Promise<IDBPDatabase<CheckinDB>> {
         if (!db.objectStoreNames.contains("outbox")) {
           const outbox = db.createObjectStore("outbox", { keyPath: "id" });
           outbox.createIndex("by_seq", "seq");
+        }
+        if (!db.objectStoreNames.contains("fotos")) {
+          db.createObjectStore("fotos", { keyPath: "evento_id" });
         }
         if (!db.objectStoreNames.contains("catalogo")) db.createObjectStore("catalogo");
         if (!db.objectStoreNames.contains("sesion")) db.createObjectStore("sesion");
@@ -86,10 +100,27 @@ export async function outboxExiste(id: string): Promise<boolean> {
   return (await db.getKey("outbox", id)) !== undefined;
 }
 
-/** Cantidad de mutaciones pendientes de sincronizar. */
+/** Cantidad de mutaciones pendientes de sincronizar (eventos + fotos). */
 export async function pendientes(): Promise<number> {
   const db = await abrirDB();
-  return db.count("outbox");
+  return (await db.count("outbox")) + (await db.count("fotos"));
+}
+
+// ---------- Fotos de evidencia pendientes ----------
+
+export async function fotoEncolar(foto: FotoPendiente): Promise<void> {
+  const db = await abrirDB();
+  await db.put("fotos", foto);
+}
+
+export async function fotosPendientes(): Promise<FotoPendiente[]> {
+  const db = await abrirDB();
+  return db.getAll("fotos");
+}
+
+export async function fotoBorrar(eventoId: string): Promise<void> {
+  const db = await abrirDB();
+  await db.delete("fotos", eventoId);
 }
 
 // ---------- Cache genérico (catalogo / sesion) ----------

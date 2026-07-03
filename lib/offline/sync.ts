@@ -1,9 +1,18 @@
 // Vaciado de la cola offline a Supabase. Se dispara al reconectar (ver
 // OfflineSync). Vacía la outbox en orden (jornada antes que sus eventos) con
 // upsert idempotente (on conflict id); borra de la cola solo al confirmar.
+// Después sube las fotos de evidencia a Storage (bucket `evidencias`), solo
+// las de eventos que ya salieron de la outbox.
 
 import { createClient } from "@/lib/supabase/client";
-import { outboxBorrar, outboxOrdenado, pendientes } from "./db";
+import {
+  fotoBorrar,
+  fotosPendientes,
+  outboxBorrar,
+  outboxExiste,
+  outboxOrdenado,
+  pendientes,
+} from "./db";
 
 export interface SyncResultado {
   enviados: number;
@@ -22,7 +31,8 @@ export async function sync(): Promise<SyncResultado> {
   if (enCurso || !estaOnline()) return { enviados: 0, pendientes: await pendientes() };
 
   const items = await outboxOrdenado();
-  if (items.length === 0) return { enviados: 0, pendientes: 0 };
+  const fotos = await fotosPendientes();
+  if (items.length === 0 && fotos.length === 0) return { enviados: 0, pendientes: 0 };
 
   const supabase = createClient();
   const {
@@ -30,7 +40,7 @@ export async function sync(): Promise<SyncResultado> {
   } = await supabase.auth.getSession();
   // Sin sesión no se puede escribir (RLS por auth.uid()); se reintenta tras login.
   if (!session) {
-    return { enviados: 0, pendientes: items.length, error: "sin-sesion" };
+    return { enviados: 0, pendientes: await pendientes(), error: "sin-sesion" };
   }
 
   enCurso = true;
@@ -51,6 +61,24 @@ export async function sync(): Promise<SyncResultado> {
       } catch {
         // Fallo de red: cortar y reintentar más tarde. La cola nunca se pierde.
         break;
+      }
+    }
+
+    // Fotos de evidencia: recién cuando su evento ya está en Supabase (si el
+    // evento sigue encolado, se saltea para no dejar evidencia huérfana).
+    for (const foto of fotos) {
+      if (await outboxExiste(foto.evento_id)) continue;
+      try {
+        const { error } = await supabase.storage
+          .from("evidencias")
+          .upload(foto.path, foto.blob, { upsert: true, contentType: "image/jpeg" });
+        if (error) {
+          return { enviados, pendientes: await pendientes(), error: error.message };
+        }
+        await fotoBorrar(foto.evento_id);
+        enviados++;
+      } catch {
+        break; // fallo de red: reintentar más tarde
       }
     }
   } finally {

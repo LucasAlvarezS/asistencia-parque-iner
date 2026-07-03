@@ -26,6 +26,17 @@ ts del evento `traslado_maquina` (traslado real a cada aero), y `finalizar_parqu
 igual que `salida_parque` (antes, cerrar con "Finalizar parque" dejaba el último aero sin
 `esfuerzo_final`/`salida_de_parque`/`tiempo_min`).
 
+Desde **0005** (`supabase/migrations/0005_evidencias_stop_run.sql`) el flujo externo ya no
+registra el botón Traslado: el técnico solo marca **STOP** (`entrada_wtg`, parada del aero) y
+**RUN** (`salida_wtg`, arranque del aero). `esfuerzo_inicio`/`traslado_min` se siguen derivando
+en `reporte_externo` sin cambios de vista: el `lag()` de la cadena cae en el RUN anterior (o en
+`entrada_parque` para el primer aero del día) cuando no hay `traslado_maquina` — el fallback
+documentado en 0003 pasa a ser el comportamiento primario. Los datos históricos con traslado
+conservan su semántica; **n8n no cambia** (mismas vistas y columnas). Además cada STOP/RUN puede
+llevar una foto de evidencia (`eventos.foto_path` → bucket privado `evidencias`,
+path `{tecnico_id}/{evento_id}.jpg`), que la app también comparte a WhatsApp con el comando
+legado (`-stop wtg 28` / `-run wtg 28` + `HH:MM DD/MM`).
+
 Mapeo columna del Sheet → campo de la vista → formato en el nodo Code:
 
 | Columna Sheet | Campo | Formato |

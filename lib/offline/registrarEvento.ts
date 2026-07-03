@@ -12,13 +12,19 @@ import {
   categoriaDeEvento,
 } from "@/lib/catalogos";
 import { ahoraISO, fechaHoy } from "@/lib/tiempo";
-import { cacheGet, cacheSet, encolar } from "./db";
+import { cacheGet, cacheSet, encolar, fotoEncolar } from "./db";
 import {
   type EstadoJornada,
   estadoDesdeEventos,
   getTiposJornada,
   pushTipoJornada,
 } from "./estado";
+import {
+  agregarInspeccionado,
+  guardarAeroActual,
+  leerAeroActual,
+  limpiarInspeccionados,
+} from "./inspeccionados";
 import { guardarAsignacion, leerAsignacion, leerPerfil } from "./sesion";
 
 export interface RegistrarEventoInput {
@@ -27,6 +33,7 @@ export interface RegistrarEventoInput {
   motivo?: StandbyMotivo; // requerido en inicio_standby
   motivoOtro?: string; // texto si motivo = otros
   comentario?: string;
+  foto?: Blob; // evidencia JPEG ya comprimida (STOP/RUN del externo)
 }
 
 interface JornadaActiva {
@@ -35,10 +42,10 @@ interface JornadaActiva {
   abierta_ts: string;
 }
 
-/** Registra un evento (lo encola). Devuelve el id, la jornada y el estado nuevo. */
+/** Registra un evento (lo encola). Devuelve id, jornada, ts local y estado nuevo. */
 export async function registrarEvento(
   input: RegistrarEventoInput,
-): Promise<{ id: string; jornadaId: string; estado: EstadoJornada }> {
+): Promise<{ id: string; jornadaId: string; ts: string; estado: EstadoJornada }> {
   const perfil = await leerPerfil();
   const asignacion = await leerAsignacion();
   if (!perfil || !asignacion) {
@@ -81,6 +88,7 @@ export async function registrarEvento(
   }
 
   const id = crypto.randomUUID();
+  const fotoPath = input.foto ? `${perfil.id}/${id}.jpg` : null;
   await encolar({
     id,
     tabla: "eventos",
@@ -95,11 +103,29 @@ export async function registrarEvento(
       motivo: input.motivo ?? null,
       motivo_otro: input.motivoOtro ?? null,
       comentario: input.comentario ?? null,
+      foto_path: fotoPath,
     },
   });
+  if (input.foto && fotoPath) {
+    await fotoEncolar({ evento_id: id, path: fotoPath, blob: input.foto, creado_ts: ts });
+  }
 
   // Registra el tipo en la secuencia del día (máquina de estados de botones).
   const tipos = await pushTipoJornada(jornadaId, input.tipo);
+
+  // Acumulado de inspeccionados (resumen del externo): el STOP abre el aero; el
+  // RUN o un cierre con el aero abierto lo acreditan (criterio de `visitas_aero`).
+  if (input.tipo === EVENTO_TIPO.ENTRADA_WTG) {
+    await guardarAeroActual(jornadaId, input.maquinaId ?? null);
+  } else if (
+    input.tipo === EVENTO_TIPO.SALIDA_WTG ||
+    input.tipo === EVENTO_TIPO.SALIDA_PARQUE ||
+    input.tipo === EVENTO_TIPO.FINALIZAR_PARQUE
+  ) {
+    const aeroAbierto = await leerAeroActual(jornadaId);
+    if (aeroAbierto) await agregarInspeccionado(asignacion.id, aeroAbierto);
+    await guardarAeroActual(jornadaId, null);
+  }
 
   // Cierres: salida_parque cierra el DÍA; finalizar_parque cierra el PARQUE.
   if (input.tipo === EVENTO_TIPO.SALIDA_PARQUE) {
@@ -109,7 +135,7 @@ export async function registrarEvento(
     await finalizarAsignacion(perfil, asignacion, ts);
   }
 
-  return { id, jornadaId, estado: estadoDesdeEventos(tipos) };
+  return { id, jornadaId, ts, estado: estadoDesdeEventos(tipos) };
 }
 
 function payloadJornada(
@@ -183,7 +209,10 @@ async function finalizarAsignacion(
     true,
   );
   // Vuelve a onboarding: limpia asignación activa y el estado del día cacheados.
+  // El snapshot del resumen del externo se toma ANTES de registrar el cierre.
   await guardarAsignacion(null);
   await cacheSet("sesion", "jornada_activa", null);
   await cacheSet("sesion", "jornada_eventos", null);
+  await limpiarInspeccionados(asignacion.id);
+  await cacheSet("sesion", "aero_actual", null);
 }

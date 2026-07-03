@@ -15,7 +15,7 @@ import { cacheGet, cacheSet } from "./db";
 export interface EstadoJornada {
   enParque: boolean; // ya se registró entrada_parque
   trasladoHecho: boolean; // ya se registró un traslado_maquina (interno: 1×/día)
-  enTraslado: boolean; // externo: se apretó Traslado y falta la Parada de aero
+  enTraslado: boolean; // se apretó Traslado y falta la entrada a turbina (solo interno; el externo ya no registra traslados)
   enTurbina: boolean; // hay un entrada_wtg sin su salida_wtg
   almuerzoHecho: boolean; // ya se registró el almuerzo
   diaCerrado: boolean; // salida_parque o finalizar_parque
@@ -81,12 +81,10 @@ export function botonHabilitado(
       return !e.diaCerrado && !e.enParque; // una vez por día (abre la jornada)
     case EVENTO_TIPO.TRASLADO_MAQUINA:
       return externo
-        ? !e.diaCerrado && e.enParque && !e.enTraslado && !e.enTurbina // por aero
+        ? false // el externo no registra traslado: se deriva del RUN→STOP en la planilla
         : !e.diaCerrado && e.enParque && !e.trasladoHecho && !e.enTurbina; // 1×/día
     case EVENTO_TIPO.ENTRADA_WTG:
-      return externo
-        ? !e.diaCerrado && e.enParque && e.enTraslado // exige Traslado previo
-        : !e.diaCerrado && e.enParque && !e.enTurbina; // no entrar si ya estás dentro
+      return !e.diaCerrado && e.enParque && !e.enTurbina; // no entrar si ya estás dentro
     case EVENTO_TIPO.SALIDA_WTG:
       return !e.diaCerrado && e.enTurbina; // solo si estás dentro
     case EVENTO_TIPO.INICIO_ALMUERZO:

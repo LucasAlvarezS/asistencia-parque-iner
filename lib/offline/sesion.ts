@@ -20,6 +20,7 @@ export interface AsignacionCache {
   pais: Pais;
   tz: string; // IANA, para fecha de jornada y ts_dispositivo
   inicio_ts: string;
+  turbinas: number | null; // objetivo del parque (para "restantes" offline)
 }
 
 export interface AeroCache {

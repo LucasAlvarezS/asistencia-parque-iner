@@ -215,9 +215,8 @@ export type CierreTipo = (typeof CIERRE_TIPO)[keyof typeof CIERRE_TIPO];
 // Etiquetas del inspector externo (override). Lo no listado usa EVENTO_TIPO_LABEL.
 const EVENTO_LABEL_EXTERNO: Partial<Record<EventoTipo, string>> = {
   [EVENTO_TIPO.ENTRADA_PARQUE]: "Llegada a parque",
-  [EVENTO_TIPO.TRASLADO_MAQUINA]: "Traslado",
-  [EVENTO_TIPO.ENTRADA_WTG]: "Parada de aero",
-  [EVENTO_TIPO.SALIDA_WTG]: "Inicio de aero",
+  [EVENTO_TIPO.ENTRADA_WTG]: "STOP · Parada de aero",
+  [EVENTO_TIPO.SALIDA_WTG]: "RUN · Inicio de aero",
 };
 
 /** Etiqueta del botón según el subtipo del técnico. */
@@ -245,13 +244,11 @@ export const BOTONES_POR_SUBTIPO: Record<Subtipo, BotonesConfig> = {
     ],
   },
   [SUBTIPO.INSPECTOR_EXTERNO]: {
+    // El destacado alterna STOP/RUN en la UI según haya un aero abierto.
+    // Sin almuerzo ni Traslado: el traslado se deriva en la planilla
+    // (RUN anterior → STOP siguiente; primer aero: llegada → primer STOP).
     destacado: EVENTO_TIPO.ENTRADA_WTG,
-    // Sin almuerzo; el "Traslado" se registra por cada aero.
-    directos: [
-      EVENTO_TIPO.ENTRADA_PARQUE,
-      EVENTO_TIPO.TRASLADO_MAQUINA,
-      EVENTO_TIPO.SALIDA_WTG,
-    ],
+    directos: [EVENTO_TIPO.ENTRADA_PARQUE],
   },
 };
 
