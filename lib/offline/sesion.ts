@@ -56,6 +56,7 @@ export async function limpiarSesion(): Promise<void> {
     cacheSet("sesion", "asignacion", null),
     cacheSet("sesion", "jornada_activa", null),
     cacheSet("sesion", "jornada_eventos", null),
+    cacheSet("sesion", "jornada_detalle", null),
   ]);
 }
 
@@ -66,6 +67,7 @@ export async function limpiarAsignacionLocal(asignacionId: string): Promise<void
     cacheSet("sesion", "asignacion", null),
     cacheSet("sesion", "jornada_activa", null),
     cacheSet("sesion", "jornada_eventos", null),
+    cacheSet("sesion", "jornada_detalle", null),
     cacheSet("sesion", "aero_actual", null),
     limpiarInspeccionados(asignacionId),
   ]);

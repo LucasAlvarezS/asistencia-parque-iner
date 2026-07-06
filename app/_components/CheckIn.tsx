@@ -22,7 +22,11 @@ import {
   labelEvento,
   paisConfigDe,
 } from "@/lib/catalogos";
-import { textoEvidencia } from "@/lib/compartir";
+import {
+  type ResumenJornada,
+  resumenJornadaDesdeEventos,
+  textoEvidencia,
+} from "@/lib/compartir";
 import { fechaHoy } from "@/lib/tiempo";
 import { createClient } from "@/lib/supabase/client";
 import { registrarEvento } from "@/lib/offline/registrarEvento";
@@ -33,10 +37,8 @@ import {
   estadoDesdeEventos,
   getTiposJornada,
 } from "@/lib/offline/estado";
-import {
-  leerAeroActual,
-  leerInspeccionados,
-} from "@/lib/offline/inspeccionados";
+import { leerAeroActual } from "@/lib/offline/inspeccionados";
+import { leerEventosDetalle } from "@/lib/offline/detalleJornada";
 import {
   type AeroCache,
   type AsignacionCache,
@@ -50,7 +52,7 @@ import {
 import { sync } from "@/lib/offline/sync";
 import { ModalCompartir, ModalEvidencia } from "./Evidencia";
 import { Overlay } from "./Overlay";
-import { type DatosResumen, ModalResumenDia } from "./ResumenDia";
+import { ModalResumenDia } from "./ResumenDia";
 import { SyncIndicator } from "./SyncIndicator";
 import {
   IconBandera,
@@ -113,9 +115,11 @@ interface Compartible {
 export function CheckIn({
   onFinalizado,
   onLogout,
+  onVerJornadas,
 }: {
   onFinalizado: () => void;
   onLogout: () => void;
+  onVerJornadas: () => void;
 }) {
   const [asignacion, setAsignacion] = useState<AsignacionCache | null>(null);
   const [subtipo, setSubtipo] = useState<Subtipo | null>(null);
@@ -131,7 +135,7 @@ export function CheckIn({
   const [aeroElegido, setAeroElegido] = useState<AeroCache | null>(null); // STOP pendiente de foto
   const [aeroActual, setAeroActual] = useState<AeroCache | null>(null); // STOP registrado sin RUN
   const [compartir, setCompartir] = useState<Compartible | null>(null);
-  const [resumen, setResumen] = useState<DatosResumen | null>(null);
+  const [resumen, setResumen] = useState<ResumenJornada | null>(null);
   const [resumenEsFinal, setResumenEsFinal] = useState(false);
 
   const externo = subtipo === SUBTIPO.INSPECTOR_EXTERNO;
@@ -187,33 +191,30 @@ export function CheckIn({
     }
   }
 
-  /** Snapshot del resumen del externo. Se toma ANTES de registrar el cierre
-   *  (finalizar_parque limpia el acumulado y la asignación local). */
-  async function armarResumen(cierraTurbina: boolean): Promise<DatosResumen | null> {
-    if (!externo || !asignacion) return null;
-    const ids = new Set(await leerInspeccionados(asignacion.id));
-    if (cierraTurbina && estado.enTurbina && aeroActual) ids.add(aeroActual.id);
-    const numeros = aeros
-      .filter((a) => ids.has(a.id))
-      .map((a) => a.numero)
-      .sort((x, y) => x - y);
-    const total = asignacion.turbinas ?? aeros.length;
-    const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
-    return {
-      tecnico: nombreTecnico ?? "—",
-      parque: asignacion.parque_nombre,
-      fecha: `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`,
-      numeros,
-      restantes: Math.max(0, total - numeros.length),
-    };
-  }
-
-  /** Cierre del día/parque: para el externo arma y muestra el resumen copiable. */
+  /** Cierre del día/parque: para el externo arma y muestra el resumen detallado.
+   *  Los eventos del día se leen ANTES de registrar el cierre (finalizar_parque
+   *  limpia el detalle local y la asignación); la hora de salida sale de res.ts. */
   async function cerrar(tipo: EventoTipo) {
-    const datos = await armarResumen(true);
+    const eventos =
+      externo && asignacion
+        ? await leerEventosDetalle(`${asignacion.id}_${fechaHoy(asignacion.tz)}`)
+        : [];
     const res = await registrar({ tipo }, etq(tipo));
-    if (res && datos) {
-      setResumen(datos);
+    if (res && externo && asignacion) {
+      const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
+      const numeroDe = (maquinaId: string | null | undefined) =>
+        aeros.find((a) => a.id === maquinaId)?.numero ?? null;
+      setResumen(
+        resumenJornadaDesdeEventos(
+          [...eventos, { tipo: EVENTO_TIPO.SALIDA_PARQUE, ts: res.ts }],
+          {
+            operador: nombreTecnico ?? "—",
+            parque: asignacion.parque_nombre,
+            fecha: `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`,
+          },
+          numeroDe,
+        ),
+      );
       setResumenEsFinal(tipo === EVENTO_TIPO.FINALIZAR_PARQUE);
     }
   }
@@ -315,6 +316,13 @@ export function CheckIn({
           <div className="rounded-full bg-white/10 px-2 py-1">
             <SyncIndicator />
           </div>
+          <button
+            type="button"
+            onClick={onVerJornadas}
+            className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/90 transition hover:bg-white/20"
+          >
+            Jornadas
+          </button>
           <button
             type="button"
             onClick={() => setModal("logout")}
@@ -673,7 +681,19 @@ function ModalStandby({
 
       {requiereSublista && (
         <div className="mt-3 space-y-2 border-t border-black/10 pt-3">
-          <p className="text-xs font-semibold text-iner-gray">Condición de clima</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-iner-gray">Condición de clima</p>
+            <button
+              type="button"
+              onClick={() => {
+                setMotivo(null);
+                setClima(null);
+              }}
+              className="text-xs font-semibold text-iner-green underline"
+            >
+              ← Volver
+            </button>
+          </div>
           {CLIMA_MOTIVOS.map((c) => (
             <button
               key={c}

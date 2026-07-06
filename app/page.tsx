@@ -11,6 +11,7 @@ import {
 } from "@/lib/offline/sesion";
 import { CheckIn } from "./_components/CheckIn";
 import { Hero } from "./_components/Hero";
+import { Jornadas } from "./_components/Jornadas";
 import { Login } from "./_components/Login";
 import { Onboarding } from "./_components/Onboarding";
 
@@ -21,6 +22,9 @@ type Estado = "cargando" | "login" | "onboarding" | "checkin";
 // sesión de Supabase solo se exige cuando hay red.
 export default function Page() {
   const [estado, setEstado] = useState<Estado>("cargando");
+  // Vista de jornadas pasadas: ortogonal al gate (se abre desde check-in u
+  // onboarding y al volver conserva la pantalla de origen).
+  const [verJornadas, setVerJornadas] = useState(false);
 
   const evaluar = useCallback(async () => {
     const supabase = createClient();
@@ -99,17 +103,22 @@ export default function Page() {
   }
 
   if (estado === "login") return <Login onLogged={() => void evaluar()} />;
+
+  if (verJornadas) return <Jornadas onBack={() => setVerJornadas(false)} />;
+
   if (estado === "onboarding")
     return (
       <Onboarding
         onReady={() => setEstado("checkin")}
         onSalir={() => void salirAlLogin()}
+        onVerJornadas={() => setVerJornadas(true)}
       />
     );
   return (
     <CheckIn
       onFinalizado={() => setEstado("onboarding")}
       onLogout={() => void evaluar()}
+      onVerJornadas={() => setVerJornadas(true)}
     />
   );
 }

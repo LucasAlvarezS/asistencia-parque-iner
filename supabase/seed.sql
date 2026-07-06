@@ -1,9 +1,10 @@
 -- =====================================================================
 -- INER Check-in — Seed
--- Países (+TZ) · empresas (6, Chile) · parques (24: 8 CL + 16 AR) ·
--- aeros generados desde parques.turbinas. Equipos AR interna (X-C, F-K).
--- Idempotente (on conflict do update). PE/UY sin parques aún (intencional).
+-- Países (+TZ) · empresas (6, Chile) · parques (24: 8 CL + 15 AR + 1 PE) ·
+-- aeros generados desde parques.turbinas (+ `orden`). Equipos AR interna (X-C, F-K).
+-- Idempotente (on conflict do update). UY sin parques aún (intencional).
 -- Chile: lista reingresada en orden (ver 0006); empresa_id sin asignar (null).
+-- Punta Lomitas: parque de Perú (ver 0009); id `ar_punta_lomitas` conservado.
 -- =====================================================================
 
 -- Países + zona horaria (TZ_POR_PAIS) + config data-driven (ver 0004).
@@ -56,37 +57,79 @@ insert into public.parques (id, nombre, pais, empresa_id, turbinas, activo, orde
   ('ar_pepe_vi',          'PE PEPE VI',                'argentina', null, 31, true, 13),
   ('ar_san_luis',         'PE San Luis',               'argentina', null, 50, true, 14),
   ('ar_vivorata',         'PE VIVORATA',               'argentina', null, 11, true, 15),
-  ('ar_punta_lomitas',    'PE Punta Lomitas',          'argentina', null, 57, true, 16)
+  ('ar_punta_lomitas',    'PE Punta Lomitas',          'peru',      null, 57, true, 16)
 on conflict (id) do update set
   nombre = excluded.nombre, pais = excluded.pais,
   empresa_id = excluded.empresa_id, turbinas = excluded.turbinas,
   activo = excluded.activo, orden = excluded.orden;
 
--- Aeros: se generan 1..turbinas por parque (id '{parque}_{n}', nombre 'WTG NN').
--- Reemplazar luego por el inventario real si los aeros tienen nombres propios.
+-- Aeros: se generan 1..turbinas por parque (id '{parque}_{n}', nombre 'WTG NN',
+-- orden = numero). Reemplazar luego por el inventario real (número + orden de
+-- recorrido del template) donde los aeros no sean contiguos.
 -- Punta Lomitas se excluye acá: su numeración es salteada (ver insert explícito abajo).
 -- Solo se generan para parques SIN aeros aún: así el seed no pelea con inventario
 -- ya cargado (evita chocar la unique (parque_id, numero) contra aeros de prueba
 -- creados con otro id). Para recargar un parque, borrá antes sus aeros.
-insert into public.aeros (id, parque_id, numero, nombre)
-select p.id || '_' || g, p.id, g, 'WTG ' || lpad(g::text, 2, '0')
+insert into public.aeros (id, parque_id, numero, nombre, orden)
+select p.id || '_' || g, p.id, g, 'WTG ' || lpad(g::text, 2, '0'), g
 from public.parques p
 cross join lateral generate_series(1, coalesce(p.turbinas, 0)) as g
-where p.id <> 'ar_punta_lomitas'
+where p.id not in (
+        'ar_punta_lomitas',                                 -- numeración salteada (abajo)
+        'cl_cabo_leones_2', 'cl_cabo_leones_3_ext', 'cl_cabo_leones_1_ext'  -- template real (abajo)
+      )
   and not exists (select 1 from public.aeros a where a.parque_id = p.id)
 on conflict (id) do nothing;
 
--- Punta Lomitas: 57 aeros reales, numeración NO contigua (faltan 5,7,10,48,49;
--- llega hasta 62). Números extraídos del Excel PLOM (hoja "Parque 1", columna WTG).
-insert into public.aeros (id, parque_id, numero, nombre)
-select 'ar_punta_lomitas_' || n, 'ar_punta_lomitas', n, 'WTG ' || lpad(n::text, 2, '0')
+-- Punta Lomitas (Perú): 57 aeros reales, numeración NO contigua (faltan 5,7,10,
+-- 48,49; llega hasta 62). Números extraídos del Excel PLOM (hoja "Parque 1",
+-- columna WTG). `orden` = posición en la lista (with ordinality).
+insert into public.aeros (id, parque_id, numero, nombre, orden)
+select 'ar_punta_lomitas_' || n, 'ar_punta_lomitas', n, 'WTG ' || lpad(n::text, 2, '0'), ord
 from unnest(array[
   1,2,3,4,6,8,9,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,
   31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,50,51,52,53,54,55,56,57,
   58,59,60,61,62
-]) as n
+]) with ordinality as t(n, ord)
 on conflict (id) do update set
-  parque_id = excluded.parque_id, numero = excluded.numero, nombre = excluded.nombre;
+  parque_id = excluded.parque_id, numero = excluded.numero,
+  nombre = excluded.nombre, orden = excluded.orden;
+
+-- Chile — inventario real (numero + orden del template, etiqueta propia por
+-- parque). Ver 0010. Los demás parques de Chile siguen con 1..N hasta su template.
+-- Cabo Leones II: AE01..AE49 (contiguos).
+insert into public.aeros (id, parque_id, numero, nombre, orden)
+select 'cl_cabo_leones_2_' || numero, 'cl_cabo_leones_2', numero,
+       'WTG ' || lpad(numero::text, 2, '0'), orden
+from unnest(array[
+  1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,
+  26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49
+]) with ordinality as t(numero, orden)
+on conflict (id) do update set
+  parque_id = excluded.parque_id, numero = excluded.numero,
+  nombre = excluded.nombre, orden = excluded.orden;
+
+-- Cabo Leones III Ext: AE-12..AE-23 + AE-35..AE-44.
+insert into public.aeros (id, parque_id, numero, nombre, orden)
+select 'cl_cabo_leones_3_ext_' || numero, 'cl_cabo_leones_3_ext', numero,
+       'WTG ' || lpad(numero::text, 2, '0'), orden
+from unnest(array[
+  12,13,14,15,16,17,18,19,20,21,22,23,35,36,37,38,39,40,41,42,43,44
+]) with ordinality as t(numero, orden)
+on conflict (id) do update set
+  parque_id = excluded.parque_id, numero = excluded.numero,
+  nombre = excluded.nombre, orden = excluded.orden;
+
+-- Cabo Leones I Ext: WTG-52..WTG-58 + WTG-64..WTG-68.
+insert into public.aeros (id, parque_id, numero, nombre, orden)
+select 'cl_cabo_leones_1_ext_' || numero, 'cl_cabo_leones_1_ext', numero,
+       'WTG ' || lpad(numero::text, 2, '0'), orden
+from unnest(array[
+  52,53,54,55,56,57,58,64,65,66,67,68
+]) with ordinality as t(numero, orden)
+on conflict (id) do update set
+  parque_id = excluded.parque_id, numero = excluded.numero,
+  nombre = excluded.nombre, orden = excluded.orden;
 
 -- Equipos de inspección interna (Argentina).
 insert into public.equipos (id, nombre, pais) values

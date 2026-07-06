@@ -13,6 +13,7 @@ import {
 } from "@/lib/catalogos";
 import { ahoraISO, fechaHoy } from "@/lib/tiempo";
 import { cacheGet, cacheSet, encolar, fotoEncolar } from "./db";
+import { limpiarDetalle, pushEventoDetalle } from "./detalleJornada";
 import {
   type EstadoJornada,
   estadoDesdeEventos,
@@ -112,6 +113,14 @@ export async function registrarEvento(
 
   // Registra el tipo en la secuencia del día (máquina de estados de botones).
   const tipos = await pushTipoJornada(jornadaId, input.tipo);
+  // Detalle del día (hora/aero/motivo) para el resumen detallado offline.
+  await pushEventoDetalle(jornadaId, {
+    tipo: input.tipo,
+    ts,
+    maquinaId: input.maquinaId ?? null,
+    motivo: input.motivo ?? null,
+    motivoOtro: input.motivoOtro ?? null,
+  });
 
   // Acumulado de inspeccionados (resumen del externo): el STOP abre el aero; el
   // RUN o un cierre con el aero abierto lo acreditan (criterio de `visitas_aero`).
@@ -213,6 +222,7 @@ async function finalizarAsignacion(
   await guardarAsignacion(null);
   await cacheSet("sesion", "jornada_activa", null);
   await cacheSet("sesion", "jornada_eventos", null);
+  await limpiarDetalle();
   await limpiarInspeccionados(asignacion.id);
   await cacheSet("sesion", "aero_actual", null);
 }

@@ -24,9 +24,11 @@ import { Hero } from "./Hero";
 export function Onboarding({
   onReady,
   onSalir,
+  onVerJornadas,
 }: {
   onReady: () => void;
   onSalir: () => void;
+  onVerJornadas: () => void;
 }) {
   const [parques, setParques] = useState<ParqueCache[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -43,6 +45,7 @@ export function Onboarding({
         .from("aeros")
         .select("id, numero, nombre")
         .eq("parque_id", p.id)
+        .order("orden")
         .order("numero");
       await guardarAeros(p.id, (aeros ?? []) as AeroCache[]);
       await guardarAsignacion({
@@ -164,6 +167,7 @@ export function Onboarding({
         .from("aeros")
         .select("id, numero, nombre")
         .eq("parque_id", p.id)
+        .order("orden")
         .order("numero");
       await guardarAeros(p.id, (aeros ?? []) as AeroCache[]);
       await guardarAsignacion({
@@ -240,8 +244,16 @@ export function Onboarding({
 
           <button
             type="button"
+            onClick={onVerJornadas}
+            className="btn-secondary mt-4 w-full"
+          >
+            Ver jornadas
+          </button>
+
+          <button
+            type="button"
             onClick={onSalir}
-            className="mt-4 w-full text-center text-xs text-iner-gray underline"
+            className="mt-3 w-full text-center text-xs text-iner-gray underline"
           >
             Cerrar sesión y volver al inicio
           </button>

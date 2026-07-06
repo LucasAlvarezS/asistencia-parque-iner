@@ -1,6 +1,14 @@
 // Compartir/copiar del flujo externo: mensaje de evidencia de WhatsApp por
 // evento (foto STOP/RUN) y resumen copiable de fin de día.
 
+import {
+  EVENTO_TIPO,
+  type EventoTipo,
+  STANDBY_MOTIVO,
+  STANDBY_MOTIVO_LABEL,
+  type StandbyMotivo,
+} from "./catalogos";
+
 /** Mensaje de evidencia del evento para compartir por WhatsApp junto a la foto.
  *  Encabezado fijo "INER"; el `*STOP*`/`*RUN*` usa la negrita de WhatsApp.
  *  `tsISO` es el ts local del parque (ahoraISO): la hora/fecha salen por slicing
@@ -91,31 +99,112 @@ export async function copiarTexto(texto: string): Promise<boolean> {
   }
 }
 
-/** Texto del resumen de fin de día del externo (formato acordado con PLOM). */
-export function textoResumenDia({
-  tecnico,
-  parque,
-  fecha,
-  numeros,
-  restantes,
-}: {
-  tecnico: string;
+// ---------- Resumen detallado de la jornada (por día) ----------
+// Reconstruye el desglose STOP/RUN por turbina, los stand-by (motivo + horario) y
+// la salida del parque a partir de los eventos del día. Espejo de la vista SQL
+// `reporte_externo` (ver 0001_init.sql): la cadena por aero empareja entrada_wtg
+// con la salida siguiente (salida_wtg o un cierre de día/parque).
+
+const SIN_HORA = "—";
+
+/** Evento normalizado (ya con hora de pared del parque) para armar el resumen. */
+export interface EventoResumen {
+  tipo: EventoTipo | string;
+  ts: string; // ISO 8601 local del parque
+  maquinaId?: string | null;
+  numero?: number | null; // WTG, si viene embebido (Supabase); si no, lo resuelve resolverWtg
+  motivo?: StandbyMotivo | string | null;
+  motivoOtro?: string | null;
+}
+
+export interface TurbinaResumen {
+  wtg: number | null;
+  stop: string; // HH:MM
+  run: string; // HH:MM o "—"
+}
+export interface StandbyResumen {
+  etiqueta: string;
+  inicio: string; // HH:MM
+  fin: string; // HH:MM o "—"
+}
+export interface ResumenJornada {
+  operador: string;
   parque: string;
   fecha: string; // dd/MM/yyyy
-  numeros: number[]; // WTG inspeccionados (acumulado de la asignación)
-  restantes: number;
-}): string {
-  const sangria = " ".repeat("Aerogeneradores inspeccionados: ".length);
-  const lista =
-    numeros.length === 0
-      ? "—"
-      : numeros.map((n, i) => (i === 0 ? `WTG ${n}` : `${sangria}WTG ${n}`)).join("\n");
-  return [
-    `Técnico: ${tecnico}`,
-    `Parque: ${parque}`,
-    `Fecha: ${fecha}`,
-    `Aerogeneradores inspeccionados: ${lista}`,
-    "",
-    `Aerogeneradores Restantes: ${restantes}`,
-  ].join("\n");
+  turbinas: TurbinaResumen[];
+  standbys: StandbyResumen[];
+  salida: string | null; // HH:MM del cierre del día/parque
+}
+
+const hhmm = (tsISO: string): string => tsISO.slice(11, 16); // HH:MM
+const CIERRAN_AERO: (EventoTipo | string)[] = [
+  EVENTO_TIPO.SALIDA_WTG,
+  EVENTO_TIPO.SALIDA_PARQUE,
+  EVENTO_TIPO.FINALIZAR_PARQUE,
+];
+
+/** Etiqueta del stand-by: "Clima -> Lluvia/llovizna" (sub-motivo en motivoOtro),
+ *  el texto libre para "Otros", o la etiqueta del motivo en el resto. */
+function etiquetaStandby(motivo?: string | null, motivoOtro?: string | null): string {
+  const detalle = motivoOtro?.trim();
+  if (motivo === STANDBY_MOTIVO.OTROS) return detalle || "Otros";
+  const base = motivo
+    ? (STANDBY_MOTIVO_LABEL[motivo as StandbyMotivo] ?? motivo)
+    : "Stand-by";
+  return detalle ? `${base} -> ${detalle}` : base;
+}
+
+/** Arma el resumen estructurado de la jornada. `eventos` puede venir sin ordenar;
+ *  `resolverWtg` mapea maquina_id → número de WTG cuando el evento no lo trae. */
+export function resumenJornadaDesdeEventos(
+  eventos: EventoResumen[],
+  meta: { operador: string; parque: string; fecha: string },
+  resolverWtg?: (maquinaId: string | null | undefined) => number | null,
+): ResumenJornada {
+  const orden = [...eventos].sort((a, b) => a.ts.localeCompare(b.ts));
+  const turbinas: TurbinaResumen[] = [];
+  const standbys: StandbyResumen[] = [];
+  let salida: string | null = null;
+
+  for (let i = 0; i < orden.length; i++) {
+    const e = orden[i];
+    const sig = orden[i + 1];
+    if (e.tipo === EVENTO_TIPO.ENTRADA_WTG) {
+      const cierra = sig != null && CIERRAN_AERO.includes(sig.tipo);
+      const wtg = e.numero ?? resolverWtg?.(e.maquinaId) ?? null;
+      turbinas.push({ wtg, stop: hhmm(e.ts), run: cierra ? hhmm(sig.ts) : SIN_HORA });
+    } else if (e.tipo === EVENTO_TIPO.INICIO_STANDBY) {
+      standbys.push({
+        etiqueta: etiquetaStandby(e.motivo, e.motivoOtro),
+        inicio: hhmm(e.ts),
+        fin: sig != null ? hhmm(sig.ts) : SIN_HORA,
+      });
+    } else if (
+      e.tipo === EVENTO_TIPO.SALIDA_PARQUE ||
+      e.tipo === EVENTO_TIPO.FINALIZAR_PARQUE
+    ) {
+      salida = hhmm(e.ts);
+    }
+  }
+  return { ...meta, turbinas, standbys, salida };
+}
+
+/** Texto copiable del resumen detallado de la jornada (formato acordado con el equipo). */
+export function textoResumenJornada(d: ResumenJornada): string {
+  const inspeccionadas = d.turbinas.filter((t) => t.run !== SIN_HORA).length;
+  const lineas: string[] = [
+    "Iner",
+    `Operador: ${d.operador}`,
+    `Parque: ${d.parque}`,
+    `Turbinas inspeccionadas: ${inspeccionadas}`,
+  ];
+  for (const t of d.turbinas) {
+    lineas.push(`${t.wtg != null ? `WTG ${t.wtg}` : "WTG —"}: STOP: ${t.stop} - RUN: ${t.run}`);
+  }
+  for (const s of d.standbys) {
+    lineas.push(`Stand-By: ${s.etiqueta}`, `Hora inicio: ${s.inicio}`, `Hora fin: ${s.fin}`);
+  }
+  if (d.salida) lineas.push(`Salida del parque: ${d.salida}`);
+  lineas.push(`Fecha: ${d.fecha}`);
+  return lineas.join("\n");
 }
