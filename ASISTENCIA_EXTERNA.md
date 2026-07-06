@@ -54,6 +54,14 @@ Mapeo columna del Sheet → campo de la vista → formato en el nodo Code:
 | Observaciones | `observacion` | texto |
 | (columna de match, oculta) | `evento_id` → `visita_id` | RAW |
 
+> **Motivos de stand-by (desde 0007):** el enum `eventos.motivo` es
+> `clima · induccion · programacion_45 · termino_parque · dia_standby · hora_maquina · otros`.
+> **Clima** abre una sub-lista en la app (velocidad del viento, lluvia/llovizna, niebla, nieve,
+> granizo, poca luz) cuya etiqueta se guarda en `motivo_otro`; **otros** guarda texto libre en
+> `motivo_otro`. La `observacion` sigue saliendo de `coalesce(motivo_otro, motivo)`, así que clima
+> muestra la condición y los motivos planos muestran su clave. Si se quiere una etiqueta bonita
+> para los motivos planos en Sheets, se mapea en el nodo Code de n8n (no versionado).
+
 Nodos:
 
 1. **Postgres "Leer reporte_externo"**

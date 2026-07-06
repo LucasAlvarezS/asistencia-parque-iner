@@ -65,8 +65,11 @@ export function categoriaDeEvento(tipo: EventoTipo): Categoria {
 
 export const STANDBY_MOTIVO = {
   CLIMA: "clima",
-  DOCUMENTACION: "documentacion",
-  PROGRAMACION_TECNICA: "programacion_tecnica",
+  INDUCCION: "induccion",
+  PROGRAMACION_45: "programacion_45",
+  TERMINO_PARQUE: "termino_parque",
+  DIA_STANDBY: "dia_standby",
+  HORA_MAQUINA: "hora_maquina",
   OTROS: "otros",
 } as const;
 export type StandbyMotivo = (typeof STANDBY_MOTIVO)[keyof typeof STANDBY_MOTIVO];
@@ -74,12 +77,41 @@ export const STANDBY_MOTIVOS = Object.values(STANDBY_MOTIVO);
 
 export const STANDBY_MOTIVO_LABEL: Record<StandbyMotivo, string> = {
   [STANDBY_MOTIVO.CLIMA]: "Clima",
-  [STANDBY_MOTIVO.DOCUMENTACION]: "Documentación",
-  [STANDBY_MOTIVO.PROGRAMACION_TECNICA]: "Programación técnica",
+  [STANDBY_MOTIVO.INDUCCION]: "Inducción",
+  [STANDBY_MOTIVO.PROGRAMACION_45]: "Programación +45min",
+  [STANDBY_MOTIVO.TERMINO_PARQUE]: "Término de parque",
+  [STANDBY_MOTIVO.DIA_STANDBY]: "Día stand by",
+  [STANDBY_MOTIVO.HORA_MAQUINA]: "1 hora de máquina",
   [STANDBY_MOTIVO.OTROS]: "Otros (especificar)",
 };
 
+// Motivos que abren un input de texto libre (se guarda en eventos.motivo_otro).
 export const MOTIVOS_REQUIEREN_TEXTO: StandbyMotivo[] = [STANDBY_MOTIVO.OTROS];
+
+// Sub-motivos de Clima. "Clima" abre esta segunda lista; el elegido se guarda
+// como etiqueta en eventos.motivo_otro (motivo queda 'clima'). Ver ModalStandby.
+export const CLIMA_MOTIVO = {
+  VIENTO: "viento",
+  LLUVIA: "lluvia",
+  NIEBLA: "niebla",
+  NIEVE: "nieve",
+  GRANIZO: "granizo",
+  POCA_LUZ: "poca_luz",
+} as const;
+export type ClimaMotivo = (typeof CLIMA_MOTIVO)[keyof typeof CLIMA_MOTIVO];
+export const CLIMA_MOTIVOS = Object.values(CLIMA_MOTIVO);
+
+export const CLIMA_MOTIVO_LABEL: Record<ClimaMotivo, string> = {
+  [CLIMA_MOTIVO.VIENTO]: "Velocidad del viento",
+  [CLIMA_MOTIVO.LLUVIA]: "Lluvia/llovizna",
+  [CLIMA_MOTIVO.NIEBLA]: "Niebla",
+  [CLIMA_MOTIVO.NIEVE]: "Nieve",
+  [CLIMA_MOTIVO.GRANIZO]: "Granizo",
+  [CLIMA_MOTIVO.POCA_LUZ]: "Poca luz",
+};
+
+// Motivos que abren una segunda lista de sub-motivos en vez de texto libre.
+export const MOTIVOS_REQUIEREN_SUBLISTA: StandbyMotivo[] = [STANDBY_MOTIVO.CLIMA];
 
 export const ROL = { TECNICO: "tecnico", ADMIN: "admin" } as const;
 

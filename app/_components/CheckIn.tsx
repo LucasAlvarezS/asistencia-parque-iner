@@ -2,11 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  CLIMA_MOTIVOS,
+  CLIMA_MOTIVO,
+  CLIMA_MOTIVO_LABEL,
+  type ClimaMotivo,
   EVENTO_TIPO,
   type EventoTipo,
+  MOTIVOS_REQUIEREN_SUBLISTA,
   MOTIVOS_REQUIEREN_TEXTO,
   PAIS_CONFIG_DEFAULT,
   type PaisConfig,
+  STANDBY_MOTIVO,
   STANDBY_MOTIVOS,
   STANDBY_MOTIVO_LABEL,
   SUBTIPO,
@@ -45,6 +51,44 @@ import { ModalCompartir, ModalEvidencia } from "./Evidencia";
 import { Overlay } from "./Overlay";
 import { type DatosResumen, ModalResumenDia } from "./ResumenDia";
 import { SyncIndicator } from "./SyncIndicator";
+import {
+  IconBandera,
+  IconCalendario,
+  IconClima,
+  IconGranizo,
+  IconInduccion,
+  IconLapiz,
+  IconLlave,
+  IconLluvia,
+  IconNiebla,
+  IconNieve,
+  IconPocaLuz,
+  type IconProps,
+  IconProgramacion,
+  IconViento,
+} from "./icons";
+
+// Iconos por motivo (solo UI; separados de la etiqueta, que se guarda en la base).
+type Icono = (p: IconProps) => React.ReactNode;
+
+const STANDBY_MOTIVO_ICON: Record<StandbyMotivo, Icono> = {
+  [STANDBY_MOTIVO.CLIMA]: IconClima,
+  [STANDBY_MOTIVO.INDUCCION]: IconInduccion,
+  [STANDBY_MOTIVO.PROGRAMACION_45]: IconProgramacion,
+  [STANDBY_MOTIVO.TERMINO_PARQUE]: IconBandera,
+  [STANDBY_MOTIVO.DIA_STANDBY]: IconCalendario,
+  [STANDBY_MOTIVO.HORA_MAQUINA]: IconLlave,
+  [STANDBY_MOTIVO.OTROS]: IconLapiz,
+};
+
+const CLIMA_MOTIVO_ICON: Record<ClimaMotivo, Icono> = {
+  [CLIMA_MOTIVO.VIENTO]: IconViento,
+  [CLIMA_MOTIVO.LLUVIA]: IconLluvia,
+  [CLIMA_MOTIVO.NIEBLA]: IconNiebla,
+  [CLIMA_MOTIVO.NIEVE]: IconNieve,
+  [CLIMA_MOTIVO.GRANIZO]: IconGranizo,
+  [CLIMA_MOTIVO.POCA_LUZ]: IconPocaLuz,
+};
 
 // Acciones que abren un modal antes de registrar.
 type Modal =
@@ -378,7 +422,9 @@ export function CheckIn({
           onConfirmar={(motivo, motivoOtro) =>
             registrar(
               { tipo: EVENTO_TIPO.INICIO_STANDBY, motivo, motivoOtro },
-              `${etq(EVENTO_TIPO.INICIO_STANDBY)} · ${STANDBY_MOTIVO_LABEL[motivo]}`,
+              `${etq(EVENTO_TIPO.INICIO_STANDBY)} · ${STANDBY_MOTIVO_LABEL[motivo]}${
+                motivoOtro ? ` · ${motivoOtro}` : ""
+              }`,
             )
           }
         />
@@ -505,8 +551,29 @@ function ModalStandby({
 }) {
   const [motivo, setMotivo] = useState<StandbyMotivo | null>(null);
   const [texto, setTexto] = useState("");
+  const [clima, setClima] = useState<ClimaMotivo | null>(null);
   const requiereTexto = motivo != null && MOTIVOS_REQUIEREN_TEXTO.includes(motivo);
-  const puedeConfirmar = motivo != null && (!requiereTexto || texto.trim().length > 0);
+  const requiereSublista = motivo != null && MOTIVOS_REQUIEREN_SUBLISTA.includes(motivo);
+  const puedeConfirmar =
+    motivo != null &&
+    (!requiereTexto || texto.trim().length > 0) &&
+    (!requiereSublista || clima != null);
+
+  function elegirMotivo(m: StandbyMotivo) {
+    setMotivo(m);
+    setClima(null); // el sub-motivo aplica solo a clima; se resetea al cambiar
+  }
+
+  function confirmar() {
+    if (!motivo) return;
+    // clima → guarda la etiqueta del sub-motivo; otros → el texto libre; resto → nada.
+    const detalle = requiereSublista
+      ? clima
+        ? CLIMA_MOTIVO_LABEL[clima]
+        : undefined
+      : texto.trim() || undefined;
+    onConfirmar(motivo, detalle);
+  }
 
   return (
     <Overlay>
@@ -521,18 +588,52 @@ function ModalStandby({
           <button
             key={m}
             type="button"
-            onClick={() => setMotivo(m)}
+            onClick={() => elegirMotivo(m)}
             className={`flex w-full items-center justify-between rounded-lg border px-3 py-3 text-sm font-semibold transition ${
               motivo === m
                 ? "border-iner-green bg-iner-green-50 text-iner-green"
                 : "border-black/15 bg-white text-foreground"
             }`}
           >
-            {STANDBY_MOTIVO_LABEL[m]}
+            <span className="flex items-center gap-2.5">
+              {(() => {
+                const Icono = STANDBY_MOTIVO_ICON[m];
+                return <Icono size={20} className="shrink-0" />;
+              })()}
+              {STANDBY_MOTIVO_LABEL[m]}
+            </span>
             {motivo === m && <span>✓</span>}
           </button>
         ))}
       </div>
+
+      {requiereSublista && (
+        <div className="mt-3 space-y-2 border-t border-black/10 pt-3">
+          <p className="text-xs font-semibold text-iner-gray">Condición de clima</p>
+          {CLIMA_MOTIVOS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setClima(c)}
+              className={`flex w-full items-center justify-between rounded-lg border px-3 py-3 text-sm font-semibold transition ${
+                clima === c
+                  ? "border-iner-green bg-iner-green-50 text-iner-green"
+                  : "border-black/15 bg-white text-foreground"
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                {(() => {
+                  const Icono = CLIMA_MOTIVO_ICON[c];
+                  return <Icono size={20} className="shrink-0" />;
+                })()}
+                {CLIMA_MOTIVO_LABEL[c]}
+              </span>
+              {clima === c && <span>✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
       {requiereTexto && (
         <input
           className="campo mt-3"
@@ -544,7 +645,7 @@ function ModalStandby({
       <button
         type="button"
         disabled={!puedeConfirmar || busy}
-        onClick={() => motivo && onConfirmar(motivo, texto.trim() || undefined)}
+        onClick={confirmar}
         className="btn-primary mt-4 w-full"
       >
         Registrar stand-by
