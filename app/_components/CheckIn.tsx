@@ -22,7 +22,7 @@ import {
   labelEvento,
   paisConfigDe,
 } from "@/lib/catalogos";
-import { comandoLegado } from "@/lib/compartir";
+import { textoEvidencia } from "@/lib/compartir";
 import { fechaHoy } from "@/lib/tiempo";
 import { createClient } from "@/lib/supabase/client";
 import { registrarEvento } from "@/lib/offline/registrarEvento";
@@ -238,7 +238,13 @@ export function CheckIn({
     setAeroElegido(null);
     if (foto) {
       setCompartir({
-        texto: comandoLegado(esStop ? "stop" : "run", aero.numero, res.ts),
+        texto: textoEvidencia({
+          tipo: esStop ? "stop" : "run",
+          operador: nombreTecnico ?? "—",
+          parque: asignacion?.parque_nombre ?? "—",
+          numeroWtg: aero.numero,
+          tsISO: res.ts,
+        }),
         blob: foto,
         nombreArchivo: `${esStop ? "stop" : "run"}-wtg-${aero.numero}.jpg`,
       });

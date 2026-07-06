@@ -1,17 +1,34 @@
-// Compartir/copiar del flujo externo: comando legado de WhatsApp por evento
-// (formato que parseaba la planilla PLOM) y resumen copiable de fin de día.
+// Compartir/copiar del flujo externo: mensaje de evidencia de WhatsApp por
+// evento (foto STOP/RUN) y resumen copiable de fin de día.
 
-/** Comando legado del evento, ej: "-stop wtg 28\n09:34 03/07".
+/** Mensaje de evidencia del evento para compartir por WhatsApp junto a la foto.
+ *  Encabezado fijo "INER"; el `*STOP*`/`*RUN*` usa la negrita de WhatsApp.
  *  `tsISO` es el ts local del parque (ahoraISO): la hora/fecha salen por slicing
  *  para respetar la hora de pared del parque aunque el teléfono esté en otra TZ. */
-export function comandoLegado(
-  tipo: "stop" | "run",
-  numeroWtg: number,
-  tsISO: string,
-): string {
+export function textoEvidencia({
+  tipo,
+  operador,
+  parque,
+  numeroWtg,
+  tsISO,
+}: {
+  tipo: "stop" | "run";
+  operador: string;
+  parque: string;
+  numeroWtg: number;
+  tsISO: string;
+}): string {
   const hora = tsISO.slice(11, 16); // HH:MM
-  const fecha = `${tsISO.slice(8, 10)}/${tsISO.slice(5, 7)}`; // DD/MM
-  return `-${tipo} wtg ${numeroWtg}\n${hora} ${fecha}`;
+  const fecha = `${tsISO.slice(8, 10)}/${tsISO.slice(5, 7)}/${tsISO.slice(0, 4)}`; // DD/MM/YYYY
+  return [
+    "INER",
+    `Operador: ${operador}`,
+    `Parque: ${parque}`,
+    `*${tipo.toUpperCase()}*`,
+    `Turbina: ${numeroWtg}`,
+    `Hora: ${hora}`,
+    `Fecha: ${fecha}`,
+  ].join("\n");
 }
 
 export type ModoCompartido = "archivo" | "texto" | "clipboard" | "cancelado";
