@@ -6,6 +6,7 @@
 // detallado (mismo formato que el cierre de día) y permite copiarlo entero.
 
 import { useEffect, useState } from "react";
+import { TZ_POR_PAIS } from "@/lib/catalogos";
 import {
   type EventoResumen,
   copiarTexto,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/compartir";
 import { leerParques, leerPerfil } from "@/lib/offline/sesion";
 import { createClient } from "@/lib/supabase/client";
+import { TZ_DEFAULT, ahoraISO } from "@/lib/tiempo";
 
 interface JornadaFila {
   id: string;
@@ -40,6 +42,7 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
   const [estado, setEstado] = useState<Estado>("cargando");
   const [jornadas, setJornadas] = useState<JornadaFila[]>([]);
   const [nombreParque, setNombreParque] = useState<Record<string, string>>({});
+  const [tzParque, setTzParque] = useState<Record<string, string>>({});
   const [operador, setOperador] = useState("—");
   const [expandida, setExpandida] = useState<string | null>(null);
 
@@ -57,6 +60,7 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
       setOperador(perfil.nombre ?? "—");
       const parques = (await leerParques()) ?? [];
       setNombreParque(Object.fromEntries(parques.map((p) => [p.id, p.nombre])));
+      setTzParque(Object.fromEntries(parques.map((p) => [p.id, TZ_POR_PAIS[p.pais]])));
       try {
         const supabase = createClient();
         const { data, error } = await supabase
@@ -110,6 +114,7 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
               key={j.id}
               jornada={j}
               parque={nombreParque[j.parque_id] ?? j.parque_id}
+              tz={tzParque[j.parque_id] ?? TZ_DEFAULT}
               operador={operador}
               abierta={expandida === j.id}
               onToggle={() => setExpandida((cur) => (cur === j.id ? null : j.id))}
@@ -123,12 +128,14 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
 function JornadaCard({
   jornada,
   parque,
+  tz,
   operador,
   abierta,
   onToggle,
 }: {
   jornada: JornadaFila;
   parque: string;
+  tz: string;
   operador: string;
   abierta: boolean;
   onToggle: () => void;
@@ -159,7 +166,9 @@ function JornadaCard({
           const aero = Array.isArray(e.aeros) ? e.aeros[0] : e.aeros;
           return {
             tipo: e.tipo,
-            ts: e.ts_dispositivo,
+            // Supabase devuelve el timestamptz en UTC; lo reexpresamos en la hora
+            // de pared del parque para que el HH:MM salga correcto (ver hhmm).
+            ts: ahoraISO(tz, new Date(e.ts_dispositivo)),
             maquinaId: e.maquina_id,
             numero: aero?.numero ?? null,
             motivo: e.motivo,
@@ -178,7 +187,7 @@ function JornadaCard({
         setCargando(false);
       }
     })();
-  }, [abierta, texto, cargando, jornada.id, jornada.fecha, operador, parque]);
+  }, [abierta, texto, cargando, jornada.id, jornada.fecha, operador, parque, tz]);
 
   return (
     <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
