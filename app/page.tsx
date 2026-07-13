@@ -10,6 +10,7 @@ import {
   limpiarSesion,
 } from "@/lib/offline/sesion";
 import { CheckIn } from "./_components/CheckIn";
+import { Clima } from "./_components/Clima";
 import { Hero } from "./_components/Hero";
 import { Jornadas } from "./_components/Jornadas";
 import { Login } from "./_components/Login";
@@ -25,6 +26,9 @@ export default function Page() {
   // Vista de jornadas pasadas: ortogonal al gate (se abre desde check-in u
   // onboarding y al volver conserva la pantalla de origen).
   const [verJornadas, setVerJornadas] = useState(false);
+  // Panel de clima: ortogonal al gate, igual que verJornadas (solo se ofrece a
+  // perfiles con ver_clima desde el check-in).
+  const [verClima, setVerClima] = useState(false);
 
   const evaluar = useCallback(async () => {
     const supabase = createClient();
@@ -106,6 +110,8 @@ export default function Page() {
 
   if (verJornadas) return <Jornadas onBack={() => setVerJornadas(false)} />;
 
+  if (verClima) return <Clima onBack={() => setVerClima(false)} />;
+
   if (estado === "onboarding")
     return (
       <Onboarding
@@ -119,6 +125,7 @@ export default function Page() {
       onFinalizado={() => setEstado("onboarding")}
       onLogout={() => void evaluar()}
       onVerJornadas={() => setVerJornadas(true)}
+      onVerClima={() => setVerClima(true)}
     />
   );
 }

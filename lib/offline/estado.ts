@@ -18,6 +18,7 @@ export interface EstadoJornada {
   enTraslado: boolean; // se apretó Traslado y falta la entrada a turbina (solo interno; el externo ya no registra traslados)
   enTurbina: boolean; // hay un entrada_wtg sin su salida_wtg
   almuerzoHecho: boolean; // ya se registró el almuerzo
+  enStandby: boolean; // hay un inicio_standby sin su fin_standby (período abierto)
   diaCerrado: boolean; // salida_parque o finalizar_parque
   parqueCerrado: boolean; // finalizar_parque
 }
@@ -28,6 +29,7 @@ export const ESTADO_INICIAL: EstadoJornada = {
   enTraslado: false,
   enTurbina: false,
   almuerzoHecho: false,
+  enStandby: false,
   diaCerrado: false,
   parqueCerrado: false,
 };
@@ -54,6 +56,12 @@ export function estadoDesdeEventos(tipos: EventoTipo[]): EstadoJornada {
         break;
       case EVENTO_TIPO.INICIO_ALMUERZO:
         e.almuerzoHecho = true;
+        break;
+      case EVENTO_TIPO.INICIO_STANDBY:
+        e.enStandby = true; // abre el período de stand-by
+        break;
+      case EVENTO_TIPO.FIN_STANDBY:
+        e.enStandby = false; // lo cierra ("Terminar" o "Retirarme")
         break;
       case EVENTO_TIPO.SALIDA_PARQUE:
         e.diaCerrado = true;
@@ -82,22 +90,24 @@ export function botonHabilitado(
     case EVENTO_TIPO.TRASLADO_MAQUINA:
       return externo
         ? false // el externo no registra traslado: se deriva del RUN→STOP en la planilla
-        : !e.diaCerrado && e.enParque && !e.enTurbina && !e.enTraslado; // 1× por turbina
+        : !e.diaCerrado && !e.enStandby && e.enParque && !e.enTurbina && !e.enTraslado; // 1× por turbina
     case EVENTO_TIPO.ENTRADA_WTG:
-      if (e.diaCerrado || !e.enParque || e.enTurbina) return false; // no entrar si ya estás dentro
+      if (e.diaCerrado || e.enStandby || !e.enParque || e.enTurbina) return false; // no entrar si ya estás dentro o en stand-by
       return externo ? true : e.enTraslado; // interno: sube solo después de trasladar
     case EVENTO_TIPO.SALIDA_WTG:
       return !e.diaCerrado && e.enTurbina; // solo si estás dentro
     case EVENTO_TIPO.INICIO_ALMUERZO:
       return externo || !paisConfig.usa_almuerzo
         ? false // el externo no registra almuerzo; ni los países que no lo usan
-        : !e.diaCerrado && e.enParque && !e.almuerzoHecho && !e.enTurbina; // una vez
+        : !e.diaCerrado && !e.enStandby && e.enParque && !e.almuerzoHecho && !e.enTurbina; // una vez
     case EVENTO_TIPO.INICIO_STANDBY:
-      return !e.diaCerrado && e.enParque; // varios permitidos
+      return !e.diaCerrado && e.enParque && !e.enStandby && !e.enTurbina; // abre el período (uno a la vez)
+    case EVENTO_TIPO.FIN_STANDBY:
+      return !e.diaCerrado && e.enStandby; // cierra el período abierto
     case EVENTO_TIPO.SALIDA_PARQUE:
-      return !e.diaCerrado && e.enParque; // cierra el día
+      return !e.diaCerrado && e.enParque && !e.enStandby; // cierra el día (primero cerrar stand-by)
     case EVENTO_TIPO.FINALIZAR_PARQUE:
-      return !e.diaCerrado && e.enParque; // cierra el parque; tras cerrar el día, bloqueado
+      return !e.diaCerrado && e.enParque && !e.enStandby; // cierra el parque
     default:
       return true;
   }

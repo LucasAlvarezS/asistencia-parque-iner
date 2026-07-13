@@ -35,6 +35,7 @@ export interface RegistrarEventoInput {
   motivoOtro?: string; // texto si motivo = otros
   comentario?: string;
   foto?: Blob; // evidencia JPEG ya comprimida (STOP/RUN del externo)
+  tsOverride?: string; // ISO a usar en vez de "ahora" (ej. fin_standby/salida a las 17:00)
 }
 
 interface JornadaActiva {
@@ -56,7 +57,9 @@ export async function registrarEvento(
   const ahora = new Date();
   const tz = asignacion.tz;
   const fecha = fechaHoy(tz, ahora);
-  const ts = ahoraISO(tz, ahora);
+  // ts = "ahora" salvo override (fin_standby/salida a la hora establecida). El día
+  // de la jornada sigue siendo hoy: el override es siempre hoy a una hora fija.
+  const ts = input.tsOverride ?? ahoraISO(tz, ahora);
   const jornadaId = `${asignacion.id}_${fecha}`;
 
   // Guardas sobre la jornada del día (secuencia persistida = fuente de verdad).

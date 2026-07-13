@@ -62,6 +62,8 @@ export function Onboarding({
         tz: TZ_POR_PAIS[p.pais],
         inicio_ts: a.inicio_ts,
         turbinas: p.turbinas ?? null,
+        lat: p.lat ?? null,
+        lon: p.lon ?? null,
       });
       // Siembra el acumulado de inspeccionados (resumen del externo) desde el
       // server: cubre dispositivo nuevo o cache borrado con asignación en curso.
@@ -112,7 +114,7 @@ export function Onboarding({
         // de su flujo: la interna y la externa no visitan los mismos parques.
         let q = supabase
           .from("parques")
-          .select("id, nombre, pais, empresa_id, turbinas")
+          .select("id, nombre, pais, empresa_id, turbinas, lat, lon")
           .eq("activo", true)
           .eq(columnaParquePermitida(perfil?.subtipo ?? null), true);
         if (perfil?.pais) q = q.eq("pais", perfil.pais);
@@ -186,6 +188,8 @@ export function Onboarding({
         tz: TZ_POR_PAIS[p.pais],
         inicio_ts,
         turbinas: p.turbinas ?? null,
+        lat: p.lat ?? null,
+        lon: p.lon ?? null,
       });
       onReady();
     } catch (err) {

@@ -9,6 +9,7 @@ import {
   type EventoTipo,
   MOTIVOS_REQUIEREN_SUBLISTA,
   MOTIVOS_REQUIEREN_TEXTO,
+  HORA_SALIDA_ESTABLECIDA,
   PAIS_CONFIG_DEFAULT,
   type PaisConfig,
   SALIDA_TEMPRANA_CORTE,
@@ -33,7 +34,7 @@ import {
   textoResumenInterno,
   textoResumenJornada,
 } from "@/lib/compartir";
-import { fechaHoy, horaLocal } from "@/lib/tiempo";
+import { fechaHoy, horaEstablecidaISO, horaLocal } from "@/lib/tiempo";
 import { refrescarEquipoMiembros } from "@/lib/equipo";
 import { createClient } from "@/lib/supabase/client";
 import { registrarEvento } from "@/lib/offline/registrarEvento";
@@ -58,6 +59,7 @@ import {
   limpiarSesion,
 } from "@/lib/offline/sesion";
 import { sync } from "@/lib/offline/sync";
+import { ClimaChip } from "./ClimaChip";
 import { ModalCompartir, ModalEvidencia } from "./Evidencia";
 import { Overlay } from "./Overlay";
 import { ModalResumenDia } from "./ResumenDia";
@@ -112,7 +114,9 @@ type Modal =
   | "evidencia-run"
   | "standby"
   | "salida"
-  | "salida-standby"
+  | "salida-opciones"
+  | "retiro-standby"
+  | "retiro-confirm"
   | "finalizar"
   | "cancelar"
   | "logout";
@@ -128,14 +132,17 @@ export function CheckIn({
   onFinalizado,
   onLogout,
   onVerJornadas,
+  onVerClima,
 }: {
   onFinalizado: () => void;
   onLogout: () => void;
   onVerJornadas: () => void;
+  onVerClima: () => void;
 }) {
   const [asignacion, setAsignacion] = useState<AsignacionCache | null>(null);
   const [subtipo, setSubtipo] = useState<Subtipo | null>(null);
   const [nombreTecnico, setNombreTecnico] = useState<string | null>(null);
+  const [verClima, setVerClima] = useState(false); // flag piloto del perfil
   const [paisConfig, setPaisConfig] = useState<PaisConfig>(PAIS_CONFIG_DEFAULT);
   const [aeros, setAeros] = useState<AeroCache[]>([]);
   const [estado, setEstado] = useState<EstadoJornada>(ESTADO_INICIAL);
@@ -164,6 +171,7 @@ export function CheckIn({
       setAsignacion(a ?? null);
       setSubtipo(perfil?.subtipo ?? null);
       setNombreTecnico(perfil?.nombre ?? null);
+      setVerClima(perfil?.ver_clima ?? false);
       setPaisConfig(paisConfigDe(a?.pais ?? perfil?.pais, cfg));
       // Refresca los nombres del equipo (resumen interno) con red, sin depender
       // del re-login. Requiere la RLS 0011 para ver a los compañeros.
@@ -220,29 +228,39 @@ export function CheckIn({
    *  asignación); la hora de salida sale de res.ts. */
   async function cerrar(
     tipo: EventoTipo,
-    standby?: { motivo: StandbyMotivo; motivoOtro?: string },
+    opts?: {
+      standby?: { motivo: StandbyMotivo; motivoOtro?: string }; // abre un stand-by antes de cerrar
+      finStandby?: boolean; // cierra el stand-by abierto (retiro por clima)
+      tsOverride?: string; // hora del fin_standby y de la salida (ej. 17:00 establecida)
+    },
   ) {
-    if (busy) return; // guarda de reentrada (el stand-by de abajo no pasa por `registrar`)
-    // Salida temprana: se registra un stand-by con su motivo ANTES de cerrar (y
-    // antes de leer los eventos del día). Va directo a registrarEvento — no al
-    // wrapper registrar — para no chocar con el debounce `busy`, que bloquearía
-    // la segunda llamada. El motivo fluye a las observaciones del reporte.
-    if (standby) {
-      try {
+    if (busy) return; // guarda de reentrada (los eventos de abajo no pasan por `registrar`)
+    // Retiro por clima: abre el stand-by (si no había) con su motivo y lo cierra a
+    // la hora establecida, antes de la salida. Van directo a registrarEvento — no
+    // al wrapper `registrar`— para no chocar con el debounce `busy`. El motivo
+    // fluye a las observaciones del reporte.
+    try {
+      if (opts?.standby) {
         await registrarEvento({
           tipo: EVENTO_TIPO.INICIO_STANDBY,
-          motivo: standby.motivo,
-          motivoOtro: standby.motivoOtro,
+          motivo: opts.standby.motivo,
+          motivoOtro: opts.standby.motivoOtro,
         });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "No se pudo registrar el motivo.");
-        return;
       }
+      if (opts?.finStandby) {
+        await registrarEvento({
+          tipo: EVENTO_TIPO.FIN_STANDBY,
+          tsOverride: opts.tsOverride,
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo registrar el stand-by.");
+      return;
     }
     const eventos = asignacion
       ? await leerEventosDetalle(`${asignacion.id}_${fechaHoy(asignacion.tz)}`)
       : [];
-    const res = await registrar({ tipo }, etq(tipo));
+    const res = await registrar({ tipo, tsOverride: opts?.tsOverride }, etq(tipo));
     if (!res || !asignacion) return;
     const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
     const numeroDe = (maquinaId: string | null | undefined) =>
@@ -395,6 +413,7 @@ export function CheckIn({
       </header>
 
       <div className="flex-1 space-y-4 p-4">
+        {verClima && <ClimaChip onVer={onVerClima} />}
         {ultimo && (
           <p className="rounded-lg border border-iner-ok/30 bg-iner-ok-50 px-3 py-2 text-sm text-iner-ok">
             ✓ {ultimo}
@@ -471,14 +490,25 @@ export function CheckIn({
               {etq(tipo)}
             </button>
           ))}
-          <button
-            type="button"
-            disabled={busy || !on(EVENTO_TIPO.INICIO_STANDBY)}
-            onClick={() => setModal("standby")}
-            className="col-span-2 rounded-xl border border-iner-amber bg-iner-amber-50 px-3 py-4 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20 disabled:opacity-40"
-          >
-            {etq(EVENTO_TIPO.INICIO_STANDBY)}
-          </button>
+          {estado.enStandby ? (
+            <button
+              type="button"
+              disabled={busy || !on(EVENTO_TIPO.FIN_STANDBY)}
+              onClick={() => registrar({ tipo: EVENTO_TIPO.FIN_STANDBY }, etq(EVENTO_TIPO.FIN_STANDBY))}
+              className="col-span-2 rounded-xl border border-iner-green bg-iner-green-50 px-3 py-4 text-sm font-bold text-iner-green transition hover:bg-iner-green/20 disabled:opacity-40"
+            >
+              {etq(EVENTO_TIPO.FIN_STANDBY)}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy || !on(EVENTO_TIPO.INICIO_STANDBY)}
+              onClick={() => setModal("standby")}
+              className="col-span-2 rounded-xl border border-iner-amber bg-iner-amber-50 px-3 py-4 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20 disabled:opacity-40"
+            >
+              {etq(EVENTO_TIPO.INICIO_STANDBY)}
+            </button>
+          )}
         </div>
 
         {/* Cierres */}
@@ -487,16 +517,27 @@ export function CheckIn({
             type="button"
             disabled={busy || !on(EVENTO_TIPO.SALIDA_PARQUE)}
             onClick={() => {
-              // El externo que cierra antes del corte pide motivo (registra un
-              // stand-by); interno y salida en horario cierran directo.
+              // Antes del corte se elige marcar stand-by o salida normal; pasado
+              // el corte cierra directo (salida normal).
               const temprana =
-                externo && !!asignacion && horaLocal(asignacion.tz) < SALIDA_TEMPRANA_CORTE;
-              setModal(temprana ? "salida-standby" : "salida");
+                !!asignacion && horaLocal(asignacion.tz) < SALIDA_TEMPRANA_CORTE;
+              setModal(temprana ? "salida-opciones" : "salida");
             }}
             className="btn-secondary w-full disabled:opacity-40"
           >
             {etq(EVENTO_TIPO.SALIDA_PARQUE)} · cierra el día
           </button>
+          {/* Con un stand-by abierto: retirarse lo cierra a la hora establecida. */}
+          {estado.enStandby && !estado.diaCerrado && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setModal("retiro-confirm")}
+              className="w-full rounded-lg border border-iner-amber bg-iner-amber-50 px-4 py-3 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20 disabled:opacity-40"
+            >
+              Retirarme del parque · por clima
+            </button>
+          )}
           <button
             type="button"
             disabled={busy || !on(EVENTO_TIPO.FINALIZAR_PARQUE)}
@@ -572,6 +613,37 @@ export function CheckIn({
           }
         />
       )}
+      {modal === "salida-opciones" && (
+        <Overlay>
+          <h2 className="text-base font-bold">Salida de parque</h2>
+          <p className="mt-2 text-sm text-iner-gray">
+            Estás saliendo antes de las {SALIDA_TEMPRANA_CORTE}. ¿Cómo la registrás?
+          </p>
+          <div className="mt-5 space-y-3">
+            <button
+              type="button"
+              onClick={() => setModal("retiro-standby")}
+              className="w-full rounded-lg border border-iner-amber bg-iner-amber-50 px-4 py-3 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20"
+            >
+              Marcar stand-by · cuenta hasta las {HORA_SALIDA_ESTABLECIDA}
+            </button>
+            <button
+              type="button"
+              onClick={() => setModal("salida")}
+              className="btn-secondary w-full"
+            >
+              Salida normal · cierra el día
+            </button>
+            <button
+              type="button"
+              onClick={() => setModal(null)}
+              className="w-full py-1 text-center text-sm text-iner-gray"
+            >
+              Cancelar
+            </button>
+          </div>
+        </Overlay>
+      )}
       {modal === "salida" && (
         <ModalConfirmar
           titulo="Salida de parque"
@@ -581,16 +653,38 @@ export function CheckIn({
           onOk={() => void cerrar(EVENTO_TIPO.SALIDA_PARQUE)}
         />
       )}
-      {modal === "salida-standby" && (
+      {modal === "retiro-standby" && (
         <ModalStandby
           busy={busy}
           climaMotivos={climaMotivosDe(asignacion?.pais)}
-          titulo="Salida temprana"
-          nota={`Estás cerrando antes de las ${SALIDA_TEMPRANA_CORTE}. Indicá el motivo.`}
-          textoOk="Registrar salida"
+          titulo="Retirarme del parque"
+          nota={`El stand-by contará desde ahora hasta la hora de salida establecida (${HORA_SALIDA_ESTABLECIDA}). Indicá el motivo.`}
+          textoOk="Registrar retiro"
           onCerrar={() => setModal(null)}
           onConfirmar={(motivo, motivoOtro) =>
-            void cerrar(EVENTO_TIPO.SALIDA_PARQUE, { motivo, motivoOtro })
+            void cerrar(EVENTO_TIPO.SALIDA_PARQUE, {
+              standby: { motivo, motivoOtro },
+              finStandby: true,
+              tsOverride: asignacion
+                ? horaEstablecidaISO(asignacion.tz, HORA_SALIDA_ESTABLECIDA)
+                : undefined,
+            })
+          }
+        />
+      )}
+      {modal === "retiro-confirm" && (
+        <ModalConfirmar
+          titulo="Retirarme del parque"
+          detalle={`El stand-by abierto se cerrará a las ${HORA_SALIDA_ESTABLECIDA} (hora de salida establecida) y se cerrará la jornada, aunque te vayas antes.`}
+          textoOk="Registrar retiro"
+          onCerrar={() => setModal(null)}
+          onOk={() =>
+            void cerrar(EVENTO_TIPO.SALIDA_PARQUE, {
+              finStandby: true,
+              tsOverride: asignacion
+                ? horaEstablecidaISO(asignacion.tz, HORA_SALIDA_ESTABLECIDA)
+                : undefined,
+            })
           }
         />
       )}

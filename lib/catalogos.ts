@@ -10,6 +10,7 @@ export const EVENTO_TIPO = {
   SALIDA_WTG: "salida_wtg",
   INICIO_ALMUERZO: "inicio_almuerzo",
   INICIO_STANDBY: "inicio_standby",
+  FIN_STANDBY: "fin_standby",
   SALIDA_PARQUE: "salida_parque",
   FINALIZAR_PARQUE: "finalizar_parque",
 } as const;
@@ -23,6 +24,7 @@ export const EVENTO_TIPO_LABEL: Record<EventoTipo, string> = {
   [EVENTO_TIPO.SALIDA_WTG]: "Salida de turbina",
   [EVENTO_TIPO.INICIO_ALMUERZO]: "Almuerzo",
   [EVENTO_TIPO.INICIO_STANDBY]: "Stand-by",
+  [EVENTO_TIPO.FIN_STANDBY]: "Terminar stand-by",
   [EVENTO_TIPO.SALIDA_PARQUE]: "Salida de parque",
   [EVENTO_TIPO.FINALIZAR_PARQUE]: "Finalizar parque",
 };
@@ -55,6 +57,7 @@ export const CATEGORIA_POR_EVENTO: Record<EventoTipo, Categoria> = {
   [EVENTO_TIPO.SALIDA_WTG]: CATEGORIA.TRASLADO,
   [EVENTO_TIPO.INICIO_ALMUERZO]: CATEGORIA.ALMUERZO,
   [EVENTO_TIPO.INICIO_STANDBY]: CATEGORIA.STAND_BY,
+  [EVENTO_TIPO.FIN_STANDBY]: CATEGORIA.STAND_BY, // cierra el tramo de stand-by
   [EVENTO_TIPO.SALIDA_PARQUE]: CATEGORIA.STAND_BY, // terminal; no abre tramo
   [EVENTO_TIPO.FINALIZAR_PARQUE]: CATEGORIA.STAND_BY, // terminal; no abre tramo
 };
@@ -126,10 +129,15 @@ export const STANDBY_MOTIVOS_SIMPLES: StandbyMotivo[] = STANDBY_MOTIVOS.filter(
   (m) => !MOTIVOS_REQUIEREN_TEXTO.includes(m) && !MOTIVOS_REQUIEREN_SUBLISTA.includes(m),
 );
 
-// Hora local del parque (HH:MM) antes de la cual la "Salida de parque" de un
-// externo se considera temprana y pide motivo (registra un stand-by). De este
-// corte en adelante cierra directo. Ver cerrar()/ModalStandby en CheckIn.tsx.
-export const SALIDA_TEMPRANA_CORTE = "16:30";
+// Hora local del parque (HH:MM) antes de la cual "Salida de parque" ofrece elegir
+// entre marcar stand-by (cuenta hasta la hora establecida) o salida normal. De
+// este corte en adelante cierra directo (salida normal). Ver CheckIn.tsx.
+export const SALIDA_TEMPRANA_CORTE = "16:00";
+
+// Hora de salida establecida (fija global): cuando el operador se retira del
+// parque por clima, el stand-by cuenta desde su inicio hasta esta hora, aunque
+// se vaya antes. Ver "Retirarme del parque" en CheckIn.tsx y horaEstablecidaISO.
+export const HORA_SALIDA_ESTABLECIDA = "17:00";
 
 export const ROL = { TECNICO: "tecnico", ADMIN: "admin" } as const;
 

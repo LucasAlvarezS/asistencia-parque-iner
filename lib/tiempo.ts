@@ -57,6 +57,16 @@ export function horaLocal(tz: string, date: Date = new Date()): string {
   return ahoraISO(tz, date).slice(11, 16);
 }
 
+/** ISO 8601 de HOY a una hora fija "HH:MM" en la TZ dada (ej. la hora de salida
+ *  establecida). Usa la fecha local del parque y su offset del instante. */
+export function horaEstablecidaISO(
+  tz: string,
+  hhmm: string,
+  date: Date = new Date(),
+): string {
+  return `${fechaHoy(tz, date)}T${hhmm}:00${offset(tz, date)}`;
+}
+
 // --- Wrappers deprecados (compatibilidad; anclados a Chile) ---------------
 /** @deprecated usar `fechaHoy(tz)` con la TZ del país del parque. */
 export const fechaHoyChile = (date: Date = new Date()) => fechaHoy(TZ_DEFAULT, date);

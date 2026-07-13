@@ -12,6 +12,7 @@ export interface PerfilCache {
   subtipo: Subtipo | null;
   pais: Pais | null;
   equipo_id: string | null;
+  ver_clima: boolean; // flag piloto: muestra el panel de clima (viento/ráfagas)
 }
 
 export interface AsignacionCache {
@@ -22,6 +23,8 @@ export interface AsignacionCache {
   tz: string; // IANA, para fecha de jornada y ts_dispositivo
   inicio_ts: string;
   turbinas: number | null; // objetivo del parque (para "restantes" offline)
+  lat: number | null; // coords del parque (para el clima); null si no cargadas
+  lon: number | null;
 }
 
 export interface AeroCache {
@@ -36,6 +39,8 @@ export interface ParqueCache {
   pais: Pais;
   empresa_id: string | null;
   turbinas: number | null;
+  lat: number | null;
+  lon: number | null;
 }
 
 // ---------- Perfil ----------
