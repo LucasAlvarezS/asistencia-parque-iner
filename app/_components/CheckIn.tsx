@@ -779,6 +779,9 @@ function ModalStandby({
   const [clima, setClima] = useState<ClimaMotivo | null>(null);
   const [conStop, setConStop] = useState<boolean | null>(null); // clima: ¿con STOP o sin STOP?
   const [extras, setExtras] = useState<Set<StandbyMotivo>>(new Set());
+  // Paso actual: "motivo" (lista + extras) o "clima" (condición + con/sin STOP,
+  // pantalla aparte para no amontonar todo y romper la vista).
+  const [paso, setPaso] = useState<"motivo" | "clima">("motivo");
   const requiereTexto = motivo != null && MOTIVOS_REQUIEREN_TEXTO.includes(motivo);
   const requiereSublista = motivo != null && MOTIVOS_REQUIEREN_SUBLISTA.includes(motivo);
   const puedeConfirmar =
@@ -791,6 +794,8 @@ function ModalStandby({
     setMotivo(m);
     setClima(null); // el sub-motivo aplica solo a clima; se resetea al cambiar
     setConStop(null);
+    // Clima abre su propia pantalla; el resto se queda en la lista de motivos.
+    setPaso(MOTIVOS_REQUIEREN_SUBLISTA.includes(m) ? "clima" : "motivo");
     // el base no puede estar también como extra
     setExtras((prev) => {
       if (!prev.has(m)) return prev;
@@ -829,6 +834,96 @@ function ModalStandby({
     onConfirmar(motivo, detalle);
   }
 
+  // Detalle del clima ya elegido (para mostrarlo en la lista de motivos).
+  const detalleClima =
+    clima != null && conStop != null
+      ? `${CLIMA_MOTIVO_LABEL[clima]} · ${conStop ? "con STOP" : "sin STOP"}`
+      : null;
+
+  // ---- Paso "clima": solo condición + con/sin STOP (oculta el resto) ----
+  if (paso === "clima") {
+    return (
+      <Overlay>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-bold">Condición de clima</h2>
+          <button
+            type="button"
+            onClick={() => {
+              setMotivo(null);
+              setClima(null);
+              setConStop(null);
+              setPaso("motivo");
+            }}
+            className="text-sm text-iner-gray"
+          >
+            ← Volver
+          </button>
+        </div>
+        <div className="space-y-2">
+          {climaMotivos.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => {
+                setClima(c);
+                setConStop(null); // re-elegir con/sin STOP para la nueva condición
+              }}
+              className={`flex w-full items-center justify-between rounded-lg border px-3 py-3 text-sm font-semibold transition ${
+                clima === c
+                  ? "border-iner-green bg-iner-green-50 text-iner-green"
+                  : "border-black/15 bg-white text-foreground"
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                {(() => {
+                  const Icono = CLIMA_MOTIVO_ICON[c];
+                  return <Icono size={20} className="shrink-0" />;
+                })()}
+                {CLIMA_MOTIVO_LABEL[c]}
+              </span>
+              {clima === c && <span>✓</span>}
+            </button>
+          ))}
+        </div>
+        {clima != null && (
+          <div className="mt-3 border-t border-black/10 pt-3">
+            <p className="mb-2 text-xs font-semibold text-iner-gray">
+              ¿La turbina quedó detenida?
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { v: true, label: "Con STOP" },
+                { v: false, label: "Sin STOP" },
+              ].map((o) => (
+                <button
+                  key={o.label}
+                  type="button"
+                  onClick={() => setConStop(o.v)}
+                  className={`rounded-lg border px-3 py-3 text-sm font-bold transition ${
+                    conStop === o.v
+                      ? "border-iner-green bg-iner-green-50 text-iner-green"
+                      : "border-black/15 bg-white text-foreground"
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <button
+          type="button"
+          disabled={clima == null || conStop == null}
+          onClick={() => setPaso("motivo")}
+          className="btn-primary mt-4 w-full disabled:opacity-40"
+        >
+          Listo
+        </button>
+      </Overlay>
+    );
+  }
+
+  // ---- Paso "motivo": lista de motivos + extras + registrar ----
   return (
     <Overlay>
       <div className="mb-3 flex items-center justify-between">
@@ -855,76 +950,17 @@ function ModalStandby({
                 const Icono = STANDBY_MOTIVO_ICON[m];
                 return <Icono size={20} className="shrink-0" />;
               })()}
-              {STANDBY_MOTIVO_LABEL[m]}
+              <span className="text-left">
+                {STANDBY_MOTIVO_LABEL[m]}
+                {m === motivo && detalleClima && (
+                  <span className="block text-xs font-normal text-iner-gray">{detalleClima}</span>
+                )}
+              </span>
             </span>
             {motivo === m && <span>✓</span>}
           </button>
         ))}
       </div>
-
-      {requiereSublista && (
-        <div className="mt-3 space-y-2 border-t border-black/10 pt-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-iner-gray">Condición de clima</p>
-            <button
-              type="button"
-              onClick={() => {
-                setMotivo(null);
-                setClima(null);
-                setConStop(null);
-              }}
-              className="text-xs font-semibold text-iner-green underline"
-            >
-              ← Volver
-            </button>
-          </div>
-          {climaMotivos.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => {
-                setClima(c);
-                setConStop(null); // re-elegir con/sin STOP para la nueva condición
-              }}
-              className={`flex w-full items-center justify-between rounded-lg border px-3 py-3 text-sm font-semibold transition ${
-                clima === c
-                  ? "border-iner-green bg-iner-green-50 text-iner-green"
-                  : "border-black/15 bg-white text-foreground"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                {(() => {
-                  const Icono = CLIMA_MOTIVO_ICON[c];
-                  return <Icono size={20} className="shrink-0" />;
-                })()}
-                {CLIMA_MOTIVO_LABEL[c]}
-              </span>
-              {clima === c && <span>✓</span>}
-            </button>
-          ))}
-          {clima != null && (
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              {[
-                { v: true, label: "Con STOP" },
-                { v: false, label: "Sin STOP" },
-              ].map((o) => (
-                <button
-                  key={o.label}
-                  type="button"
-                  onClick={() => setConStop(o.v)}
-                  className={`rounded-lg border px-3 py-3 text-sm font-bold transition ${
-                    conStop === o.v
-                      ? "border-iner-green bg-iner-green-50 text-iner-green"
-                      : "border-black/15 bg-white text-foreground"
-                  }`}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {requiereTexto && (
         <input
