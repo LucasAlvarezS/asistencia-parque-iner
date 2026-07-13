@@ -116,7 +116,6 @@ type Modal =
   | "salida"
   | "salida-opciones"
   | "retiro-standby"
-  | "retiro-confirm"
   | "finalizar"
   | "cancelar"
   | "logout";
@@ -229,33 +228,25 @@ export function CheckIn({
   async function cerrar(
     tipo: EventoTipo,
     opts?: {
-      standby?: { motivo: StandbyMotivo; motivoOtro?: string }; // abre un stand-by antes de cerrar
-      finStandby?: boolean; // cierra el stand-by abierto (retiro por clima)
-      tsOverride?: string; // hora del fin_standby y de la salida (ej. 17:00 establecida)
+      standby?: { motivo: StandbyMotivo; motivoOtro?: string }; // marca un stand-by antes de cerrar
+      tsOverride?: string; // hora de la salida (ej. 17:00 establecida, retiro por clima)
     },
   ) {
-    if (busy) return; // guarda de reentrada (los eventos de abajo no pasan por `registrar`)
-    // Retiro por clima: abre el stand-by (si no había) con su motivo y lo cierra a
-    // la hora establecida, antes de la salida. Van directo a registrarEvento — no
-    // al wrapper `registrar`— para no chocar con el debounce `busy`. El motivo
-    // fluye a las observaciones del reporte.
-    try {
-      if (opts?.standby) {
+    if (busy) return; // guarda de reentrada (el stand-by de abajo no pasa por `registrar`)
+    // Retiro por clima: marca el stand-by (a la hora actual) antes de la salida.
+    // Va directo a registrarEvento — no al wrapper `registrar`— para no chocar con
+    // el debounce `busy`. Con la salida a las 17:00, el stand-by cuenta hasta ahí.
+    if (opts?.standby) {
+      try {
         await registrarEvento({
           tipo: EVENTO_TIPO.INICIO_STANDBY,
           motivo: opts.standby.motivo,
           motivoOtro: opts.standby.motivoOtro,
         });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "No se pudo registrar el stand-by.");
+        return;
       }
-      if (opts?.finStandby) {
-        await registrarEvento({
-          tipo: EVENTO_TIPO.FIN_STANDBY,
-          tsOverride: opts.tsOverride,
-        });
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo registrar el stand-by.");
-      return;
     }
     const eventos = asignacion
       ? await leerEventosDetalle(`${asignacion.id}_${fechaHoy(asignacion.tz)}`)
@@ -490,25 +481,14 @@ export function CheckIn({
               {etq(tipo)}
             </button>
           ))}
-          {estado.enStandby ? (
-            <button
-              type="button"
-              disabled={busy || !on(EVENTO_TIPO.FIN_STANDBY)}
-              onClick={() => registrar({ tipo: EVENTO_TIPO.FIN_STANDBY }, etq(EVENTO_TIPO.FIN_STANDBY))}
-              className="col-span-2 rounded-xl border border-iner-green bg-iner-green-50 px-3 py-4 text-sm font-bold text-iner-green transition hover:bg-iner-green/20 disabled:opacity-40"
-            >
-              {etq(EVENTO_TIPO.FIN_STANDBY)}
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={busy || !on(EVENTO_TIPO.INICIO_STANDBY)}
-              onClick={() => setModal("standby")}
-              className="col-span-2 rounded-xl border border-iner-amber bg-iner-amber-50 px-3 py-4 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20 disabled:opacity-40"
-            >
-              {etq(EVENTO_TIPO.INICIO_STANDBY)}
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={busy || !on(EVENTO_TIPO.INICIO_STANDBY)}
+            onClick={() => setModal("standby")}
+            className="col-span-2 rounded-xl border border-iner-amber bg-iner-amber-50 px-3 py-4 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20 disabled:opacity-40"
+          >
+            {etq(EVENTO_TIPO.INICIO_STANDBY)}
+          </button>
         </div>
 
         {/* Cierres */}
@@ -527,17 +507,6 @@ export function CheckIn({
           >
             {etq(EVENTO_TIPO.SALIDA_PARQUE)} · cierra el día
           </button>
-          {/* Con un stand-by abierto: retirarse lo cierra a la hora establecida. */}
-          {estado.enStandby && !estado.diaCerrado && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => setModal("retiro-confirm")}
-              className="w-full rounded-lg border border-iner-amber bg-iner-amber-50 px-4 py-3 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20 disabled:opacity-40"
-            >
-              Retirarme del parque · por clima
-            </button>
-          )}
           <button
             type="button"
             disabled={busy || !on(EVENTO_TIPO.FINALIZAR_PARQUE)}
@@ -664,23 +633,6 @@ export function CheckIn({
           onConfirmar={(motivo, motivoOtro) =>
             void cerrar(EVENTO_TIPO.SALIDA_PARQUE, {
               standby: { motivo, motivoOtro },
-              finStandby: true,
-              tsOverride: asignacion
-                ? horaEstablecidaISO(asignacion.tz, HORA_SALIDA_ESTABLECIDA)
-                : undefined,
-            })
-          }
-        />
-      )}
-      {modal === "retiro-confirm" && (
-        <ModalConfirmar
-          titulo="Retirarme del parque"
-          detalle={`El stand-by abierto se cerrará a las ${HORA_SALIDA_ESTABLECIDA} (hora de salida establecida) y se cerrará la jornada, aunque te vayas antes.`}
-          textoOk="Registrar retiro"
-          onCerrar={() => setModal(null)}
-          onOk={() =>
-            void cerrar(EVENTO_TIPO.SALIDA_PARQUE, {
-              finStandby: true,
               tsOverride: asignacion
                 ? horaEstablecidaISO(asignacion.tz, HORA_SALIDA_ESTABLECIDA)
                 : undefined,
@@ -825,17 +777,20 @@ function ModalStandby({
   const [motivo, setMotivo] = useState<StandbyMotivo | null>(null);
   const [texto, setTexto] = useState("");
   const [clima, setClima] = useState<ClimaMotivo | null>(null);
+  const [conStop, setConStop] = useState<boolean | null>(null); // clima: ¿con STOP o sin STOP?
   const [extras, setExtras] = useState<Set<StandbyMotivo>>(new Set());
   const requiereTexto = motivo != null && MOTIVOS_REQUIEREN_TEXTO.includes(motivo);
   const requiereSublista = motivo != null && MOTIVOS_REQUIEREN_SUBLISTA.includes(motivo);
   const puedeConfirmar =
     motivo != null &&
     (!requiereTexto || texto.trim().length > 0) &&
-    (!requiereSublista || clima != null);
+    // Clima exige la condición Y si fue con STOP o sin STOP.
+    (!requiereSublista || (clima != null && conStop != null));
 
   function elegirMotivo(m: StandbyMotivo) {
     setMotivo(m);
     setClima(null); // el sub-motivo aplica solo a clima; se resetea al cambiar
+    setConStop(null);
     // el base no puede estar también como extra
     setExtras((prev) => {
       if (!prev.has(m)) return prev;
@@ -856,10 +811,10 @@ function ModalStandby({
 
   function confirmar() {
     if (!motivo) return;
-    // clima → etiqueta del sub-motivo; otros → texto libre; resto → nada.
+    // clima → sub-motivo + con/sin STOP; otros → texto libre; resto → nada.
     const baseDetalle = requiereSublista
-      ? clima
-        ? CLIMA_MOTIVO_LABEL[clima]
+      ? clima && conStop != null
+        ? `${CLIMA_MOTIVO_LABEL[clima]} ${conStop ? "con STOP" : "sin STOP"}`
         : undefined
       : texto.trim() || undefined;
     // Sin extras: se guarda igual que hoy. Con extras: base (etiqueta o detalle)
@@ -916,6 +871,7 @@ function ModalStandby({
               onClick={() => {
                 setMotivo(null);
                 setClima(null);
+                setConStop(null);
               }}
               className="text-xs font-semibold text-iner-green underline"
             >
@@ -926,7 +882,10 @@ function ModalStandby({
             <button
               key={c}
               type="button"
-              onClick={() => setClima(c)}
+              onClick={() => {
+                setClima(c);
+                setConStop(null); // re-elegir con/sin STOP para la nueva condición
+              }}
               className={`flex w-full items-center justify-between rounded-lg border px-3 py-3 text-sm font-semibold transition ${
                 clima === c
                   ? "border-iner-green bg-iner-green-50 text-iner-green"
@@ -943,6 +902,27 @@ function ModalStandby({
               {clima === c && <span>✓</span>}
             </button>
           ))}
+          {clima != null && (
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              {[
+                { v: true, label: "Con STOP" },
+                { v: false, label: "Sin STOP" },
+              ].map((o) => (
+                <button
+                  key={o.label}
+                  type="button"
+                  onClick={() => setConStop(o.v)}
+                  className={`rounded-lg border px-3 py-3 text-sm font-bold transition ${
+                    conStop === o.v
+                      ? "border-iner-green bg-iner-green-50 text-iner-green"
+                      : "border-black/15 bg-white text-foreground"
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
