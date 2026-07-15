@@ -45,7 +45,13 @@ import {
   estadoDesdeEventos,
   getTiposJornada,
 } from "@/lib/offline/estado";
-import { leerAeroActual, leerInspeccionados } from "@/lib/offline/inspeccionados";
+import {
+  type EventoParaSiembra,
+  inspeccionadosDesdeEventos,
+  leerAeroActual,
+  leerInspeccionados,
+  sembrarInspeccionados,
+} from "@/lib/offline/inspeccionados";
 import { leerEventosDetalle } from "@/lib/offline/detalleJornada";
 import {
   type AeroCache,
@@ -181,6 +187,28 @@ export function CheckIn({
         const jornadaId = `${a.id}_${fechaHoy(a.tz)}`;
         setEstado(estadoDesdeEventos(await getTiposJornada(jornadaId)));
         setInspeccionados(new Set(await leerInspeccionados(a.id)));
+        // Verde compartido: siembra las turbinas que el equipo/técnico YA
+        // inspeccionó en ESTE parque (otras asignaciones / histórico), para que
+        // no se re-inspeccionen. La RLS de equipo (0011/0012) acota lo visible.
+        if (navigator.onLine) {
+          try {
+            const { data: evs } = await createClient()
+              .from("eventos")
+              .select("tipo, maquina_id, ts_dispositivo, jornada_id, jornadas!inner(parque_id)")
+              .eq("jornadas.parque_id", a.parque_id)
+              .in("tipo", ["entrada_wtg", "salida_wtg", "salida_parque", "finalizar_parque"])
+              .order("ts_dispositivo");
+            if (evs) {
+              await sembrarInspeccionados(
+                a.id,
+                inspeccionadosDesdeEventos(evs as unknown as EventoParaSiembra[]),
+              );
+              setInspeccionados(new Set(await leerInspeccionados(a.id)));
+            }
+          } catch {
+            // sin red / sin permiso: se queda con el acumulado local.
+          }
+        }
         // Reconstruye el aero con STOP abierto (sobrevive recargas).
         const abierto = await leerAeroActual(jornadaId);
         setAeroActual(lista.find((x) => x.id === abierto) ?? null);
