@@ -12,6 +12,7 @@ export interface PerfilCache {
   subtipo: Subtipo | null;
   pais: Pais | null;
   equipo_id: string | null;
+  empresa_id: string | null; // si está seteado, solo ve parques de esa empresa
   ver_clima: boolean; // flag piloto: muestra el panel de clima (viento/ráfagas)
 }
 

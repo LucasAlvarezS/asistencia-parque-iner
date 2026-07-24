@@ -119,6 +119,8 @@ export function Onboarding({
           .eq("activo", true)
           .eq(columnaParquePermitida(perfil?.subtipo ?? null), true);
         if (perfil?.pais) q = q.eq("pais", perfil.pais);
+        // Técnico acotado a una empresa (operador de terceros): solo esos parques.
+        if (perfil?.empresa_id) q = q.eq("empresa_id", perfil.empresa_id);
         const { data, error } = await q.order("pais").order("orden");
         if (error) throw error;
         const lista = (data ?? []) as ParqueCache[];

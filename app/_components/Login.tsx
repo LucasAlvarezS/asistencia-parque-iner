@@ -32,7 +32,7 @@ export function Login({ onLogged }: { onLogged: () => void }) {
       // existe, la crea mínima (C9) para satisfacer la FK de jornadas/eventos.
       const { data: perfil } = await supabase
         .from("tecnicos")
-        .select("id, nombre, subtipo, pais, equipo_id, ver_clima")
+        .select("id, nombre, subtipo, pais, equipo_id, empresa_id, ver_clima")
         .eq("id", uid)
         .maybeSingle();
 
@@ -43,6 +43,7 @@ export function Login({ onLogged }: { onLogged: () => void }) {
           subtipo: perfil.subtipo as Subtipo | null,
           pais: perfil.pais as Pais | null,
           equipo_id: perfil.equipo_id,
+          empresa_id: perfil.empresa_id ?? null,
           ver_clima: perfil.ver_clima ?? false,
         });
         // Nombres del equipo para el resumen interno (solo AR interna tiene equipo).
@@ -60,6 +61,7 @@ export function Login({ onLogged }: { onLogged: () => void }) {
           subtipo: null,
           pais: null,
           equipo_id: null,
+          empresa_id: null,
           ver_clima: false,
         });
         await guardarEquipoMiembros(usuarioNorm);
