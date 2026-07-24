@@ -25,6 +25,7 @@ export interface AsignacionCache {
   turbinas: number | null; // objetivo del parque (para "restantes" offline)
   lat: number | null; // coords del parque (para el clima); null si no cargadas
   lon: number | null;
+  foto_evidencia: boolean; // fuerza foto STOP/RUN aunque sea Argentina (parque de terceros)
 }
 
 export interface AeroCache {
@@ -41,6 +42,7 @@ export interface ParqueCache {
   turbinas: number | null;
   lat: number | null;
   lon: number | null;
+  foto_evidencia: boolean;
 }
 
 // ---------- Perfil ----------

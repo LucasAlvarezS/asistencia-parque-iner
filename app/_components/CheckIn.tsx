@@ -410,8 +410,10 @@ export function CheckIn({
   const etq = (tipo: EventoTipo) => labelEvento(tipo, subtipo);
   const botones = botonesDe(subtipo, paisConfig);
   const nombreParque = asignacion?.parque_nombre ?? "—";
-  // Externo con foto (Chile) vs sin foto (Argentina/Naretto: registra directo).
-  const externoConFoto = externo && usaFotoEvidencia(asignacion?.pais);
+  // Externo con foto: por país (Chile) o forzado por parque (terceros como
+  // Siemens en Argentina, vía parques.foto_evidencia). Argentina/Naretto: directo.
+  const externoConFoto =
+    externo && (usaFotoEvidencia(asignacion?.pais) || (asignacion?.foto_evidencia ?? false));
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col">

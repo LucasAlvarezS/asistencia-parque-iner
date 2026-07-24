@@ -20,14 +20,15 @@ on conflict (id) do update set
   permite_interno = excluded.permite_interno, permite_externo = excluded.permite_externo,
   usa_almuerzo = excluded.usa_almuerzo, usa_equipos = excluded.usa_equipos;
 
--- Empresas (operadores) — solo Chile.
+-- Empresas (operadores) — Chile + Siemens (Argentina, parques de Arauco).
 insert into public.empresas (id, nombre, pais) values
   ('enel_green_power',     'ENEL Green Power Chile', 'chile'),
   ('engie_chile',          'Engie Chile',            'chile'),
   ('ibereolica_chile',     'Ibereólica Chile',       'chile'),
   ('innergex_chile',       'Innergex Chile',         'chile'),
   ('nordex_chile',         'Nordex Chile',           'chile'),
-  ('siemens_gamesa_chile', 'Siemens Gamesa Chile',   'chile')
+  ('siemens_gamesa_chile', 'Siemens Gamesa Chile',   'chile'),
+  ('siemens',              'Siemens',                'argentina')
 on conflict (id) do update set nombre = excluded.nombre, pais = excluded.pais;
 
 -- Parques. Chile (8) en orden, empresa_id sin asignar (null); Argentina (16) sin empresa.
@@ -80,7 +81,11 @@ insert into public.parques (id, nombre, pais, empresa_id, turbinas, activo, orde
   ('ar_el_mataco', 'PE El Mataco', 'argentina', null, 27, true, 34),
   ('ar_chubut_norte', 'PE Chubut Norte', 'argentina', null, 8, true, 35),
   ('ar_bicentenario', 'PE Bicentenario', 'argentina', null, 28, true, 36),
-  ('ar_bicentenario_ii', 'PE Bicentenario II', 'argentina', null, 7, true, 37)
+  ('ar_bicentenario_ii', 'PE Bicentenario II', 'argentina', null, 7, true, 37),
+  -- Parques de Siemens (Argentina, externo con foto; ver 0022). foto_evidencia
+  -- NO se setea acá (columna la agrega 0022); el flag lo prende esa migración.
+  ('ar_arauco_i_ii', 'PE Arauco I y II', 'argentina', 'siemens', 38, true, 38),
+  ('ar_arauco_iii_iv', 'PE Arauco III y IV', 'argentina', 'siemens', 19, true, 39)
 -- permite_interno/permite_externo quedan en su default (solo externo) y NO se
 -- listan en el do update: el reparto por flujo lo fija 0015_parques_por_subtipo.sql
 -- y un re-seed no debe pisarlo.
@@ -396,6 +401,21 @@ on conflict (id) do update set
 insert into public.aeros (id, parque_id, numero, nombre, orden)
 select 'ar_bicentenario_ii_' || numero, 'ar_bicentenario_ii', numero, 'WTG ' || lpad(numero::text, 2, '0'), orden
 from unnest(array[29,30,31,32,33,34,35]::int[]) with ordinality as t(numero, orden)
+on conflict (id) do update set
+  parque_id = excluded.parque_id, numero = excluded.numero,
+  nombre = excluded.nombre, orden = excluded.orden;
+
+-- PE Arauco I y II (Siemens) — 38 aeros, numeración NO contigua.
+insert into public.aeros (id, parque_id, numero, nombre, orden)
+select 'ar_arauco_i_ii_' || numero, 'ar_arauco_i_ii', numero, 'WTG ' || lpad(numero::text, 2, '0'), orden
+from unnest(array[51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,77,88,89,90,91,92,96,97,98,99,100,101,102]::int[]) with ordinality as t(numero, orden)
+on conflict (id) do update set
+  parque_id = excluded.parque_id, numero = excluded.numero,
+  nombre = excluded.nombre, orden = excluded.orden;
+-- PE Arauco III y IV (Siemens) — 19 aeros, numeración NO contigua.
+insert into public.aeros (id, parque_id, numero, nombre, orden)
+select 'ar_arauco_iii_iv_' || numero, 'ar_arauco_iii_iv', numero, 'WTG ' || lpad(numero::text, 2, '0'), orden
+from unnest(array[103,112,113,114,115,116,117,124,125,126,131,132,133,134,135,136,142,152,153]::int[]) with ordinality as t(numero, orden)
 on conflict (id) do update set
   parque_id = excluded.parque_id, numero = excluded.numero,
   nombre = excluded.nombre, orden = excluded.orden;
