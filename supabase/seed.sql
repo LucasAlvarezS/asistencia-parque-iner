@@ -20,15 +20,16 @@ on conflict (id) do update set
   permite_interno = excluded.permite_interno, permite_externo = excluded.permite_externo,
   usa_almuerzo = excluded.usa_almuerzo, usa_equipos = excluded.usa_equipos;
 
--- Empresas (operadores) — Chile + Siemens (Argentina, parques de Arauco).
+-- Empresas (operadores) — Chile + Argentina (Vestas / Siemens; ver 0024).
 insert into public.empresas (id, nombre, pais) values
   ('enel_green_power',     'ENEL Green Power Chile', 'chile'),
   ('engie_chile',          'Engie Chile',            'chile'),
   ('ibereolica_chile',     'Ibereólica Chile',       'chile'),
   ('innergex_chile',       'Innergex Chile',         'chile'),
   ('nordex_chile',         'Nordex Chile',           'chile'),
-  ('siemens_gamesa_chile', 'Siemens Gamesa Chile',   'chile'),
-  ('siemens',              'Siemens',                'argentina')
+  ('siemens_gamesa_chile',     'Siemens Gamesa Chile', 'chile'),
+  ('siemens_gamesa_argentina', 'SIEMENS AR',           'argentina'),
+  ('vestas_argentina',         'VESTAS AR',            'argentina')
 on conflict (id) do update set nombre = excluded.nombre, pais = excluded.pais;
 
 -- Parques. Chile (8) en orden, empresa_id sin asignar (null); Argentina (16) sin empresa.
@@ -84,8 +85,8 @@ insert into public.parques (id, nombre, pais, empresa_id, turbinas, activo, orde
   ('ar_bicentenario_ii', 'PE Bicentenario II', 'argentina', null, 7, true, 37),
   -- Parques de Siemens (Argentina, externo con foto; ver 0022). foto_evidencia
   -- NO se setea acá (columna la agrega 0022); el flag lo prende esa migración.
-  ('ar_arauco_i_ii', 'PE Arauco I y II', 'argentina', 'siemens', 38, true, 38),
-  ('ar_arauco_iii_iv', 'PE Arauco III y IV', 'argentina', 'siemens', 19, true, 39)
+  ('ar_arauco_i_ii', 'PE Arauco I y II', 'argentina', 'siemens_gamesa_argentina', 38, true, 38),
+  ('ar_arauco_iii_iv', 'PE Arauco III y IV', 'argentina', 'siemens_gamesa_argentina', 19, true, 39)
 -- permite_interno/permite_externo quedan en su default (solo externo) y NO se
 -- listan en el do update: el reparto por flujo lo fija 0015_parques_por_subtipo.sql
 -- y un re-seed no debe pisarlo.
@@ -93,6 +94,12 @@ on conflict (id) do update set
   nombre = excluded.nombre, pais = excluded.pais,
   empresa_id = excluded.empresa_id, turbinas = excluded.turbinas,
   activo = excluded.activo, orden = excluded.orden;
+
+-- Empresa de los parques argentinos sin operador explícito → Vestas (ver 0024).
+-- Corre después del insert (Arauco ya quedó en 'siemens_gamesa_argentina' arriba).
+-- Filtra por pais='argentina' (NO por prefijo id): 'ar_punta_lomitas' es de Perú.
+update public.parques set empresa_id = 'vestas_argentina'
+  where pais = 'argentina' and empresa_id is null;
 
 -- Punta Lomitas (Perú): 57 aeros reales, numeración NO contigua (faltan 5,7,10,
 -- 48,49; llega hasta 62). Números extraídos del Excel PLOM (hoja "Parque 1",
