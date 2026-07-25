@@ -10,6 +10,7 @@ export const EVENTO_TIPO = {
   SALIDA_WTG: "salida_wtg",
   INICIO_ALMUERZO: "inicio_almuerzo",
   INICIO_STANDBY: "inicio_standby",
+  FIN_STANDBY: "fin_standby",
   SALIDA_PARQUE: "salida_parque",
   FINALIZAR_PARQUE: "finalizar_parque",
 } as const;
@@ -23,6 +24,7 @@ export const EVENTO_TIPO_LABEL: Record<EventoTipo, string> = {
   [EVENTO_TIPO.SALIDA_WTG]: "Salida de turbina",
   [EVENTO_TIPO.INICIO_ALMUERZO]: "Almuerzo",
   [EVENTO_TIPO.INICIO_STANDBY]: "Stand-by",
+  [EVENTO_TIPO.FIN_STANDBY]: "Terminar stand-by",
   [EVENTO_TIPO.SALIDA_PARQUE]: "Salida de parque",
   [EVENTO_TIPO.FINALIZAR_PARQUE]: "Finalizar parque",
 };
@@ -112,6 +114,7 @@ export const CATEGORIA_POR_EVENTO: Record<EventoTipo, Categoria> = {
   [EVENTO_TIPO.SALIDA_WTG]: CATEGORIA.TRASLADO,
   [EVENTO_TIPO.INICIO_ALMUERZO]: CATEGORIA.ALMUERZO,
   [EVENTO_TIPO.INICIO_STANDBY]: CATEGORIA.STAND_BY,
+  [EVENTO_TIPO.FIN_STANDBY]: CATEGORIA.TRASLADO, // cierra el stand-by; abre tramo neutro
   [EVENTO_TIPO.SALIDA_PARQUE]: CATEGORIA.STAND_BY, // terminal; no abre tramo
   [EVENTO_TIPO.FINALIZAR_PARQUE]: CATEGORIA.STAND_BY, // terminal; no abre tramo
 };

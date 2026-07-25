@@ -526,14 +526,27 @@ export function CheckIn({
               {etq(tipo)}
             </button>
           ))}
-          <button
-            type="button"
-            disabled={busy || !on(EVENTO_TIPO.INICIO_STANDBY)}
-            onClick={() => setModal("standby")}
-            className="col-span-2 rounded-xl border border-iner-amber bg-iner-amber-50 px-3 py-4 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20 disabled:opacity-40"
-          >
-            {etq(EVENTO_TIPO.INICIO_STANDBY)}
-          </button>
+          {estado.enStandby ? (
+            <button
+              type="button"
+              disabled={busy || !on(EVENTO_TIPO.FIN_STANDBY)}
+              onClick={() =>
+                registrar({ tipo: EVENTO_TIPO.FIN_STANDBY }, etq(EVENTO_TIPO.FIN_STANDBY))
+              }
+              className="col-span-2 rounded-xl border border-iner-amber bg-iner-amber px-3 py-4 text-sm font-bold text-white transition hover:bg-iner-amber/90 disabled:opacity-40"
+            >
+              {etq(EVENTO_TIPO.FIN_STANDBY)}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy || !on(EVENTO_TIPO.INICIO_STANDBY)}
+              onClick={() => setModal("standby")}
+              className="col-span-2 rounded-xl border border-iner-amber bg-iner-amber-50 px-3 py-4 text-sm font-bold text-[#9a6200] transition hover:bg-iner-amber/20 disabled:opacity-40"
+            >
+              {etq(EVENTO_TIPO.INICIO_STANDBY)}
+            </button>
+          )}
         </div>
 
         {/* Cierres */}

@@ -18,6 +18,7 @@ export interface EstadoJornada {
   enTraslado: boolean; // se apretó Traslado y falta la entrada a turbina (solo interno; el externo ya no registra traslados)
   enTurbina: boolean; // hay un entrada_wtg sin su salida_wtg
   almuerzoHecho: boolean; // ya se registró el almuerzo
+  enStandby: boolean; // hay un inicio_standby sin su fin_standby (período abierto)
   diaCerrado: boolean; // salida_parque o finalizar_parque
   parqueCerrado: boolean; // finalizar_parque
 }
@@ -28,6 +29,7 @@ export const ESTADO_INICIAL: EstadoJornada = {
   enTraslado: false,
   enTurbina: false,
   almuerzoHecho: false,
+  enStandby: false,
   diaCerrado: false,
   parqueCerrado: false,
 };
@@ -55,10 +57,18 @@ export function estadoDesdeEventos(tipos: EventoTipo[]): EstadoJornada {
       case EVENTO_TIPO.INICIO_ALMUERZO:
         e.almuerzoHecho = true;
         break;
+      case EVENTO_TIPO.INICIO_STANDBY:
+        e.enStandby = true;
+        break;
+      case EVENTO_TIPO.FIN_STANDBY:
+        e.enStandby = false;
+        break;
       case EVENTO_TIPO.SALIDA_PARQUE:
+        e.enStandby = false; // la salida cierra un stand-by abierto (cuenta hasta la salida)
         e.diaCerrado = true;
         break;
       case EVENTO_TIPO.FINALIZAR_PARQUE:
+        e.enStandby = false;
         e.diaCerrado = true;
         e.parqueCerrado = true;
         break;
@@ -76,6 +86,15 @@ export function botonHabilitado(
   paisConfig: PaisConfig = PAIS_CONFIG_DEFAULT,
 ): boolean {
   const externo = subtipo === SUBTIPO.INSPECTOR_EXTERNO;
+  // En stand-by abierto solo se puede terminarlo o salir del parque (período limpio).
+  if (
+    e.enStandby &&
+    tipo !== EVENTO_TIPO.FIN_STANDBY &&
+    tipo !== EVENTO_TIPO.SALIDA_PARQUE &&
+    tipo !== EVENTO_TIPO.FINALIZAR_PARQUE
+  ) {
+    return false;
+  }
   switch (tipo) {
     case EVENTO_TIPO.ENTRADA_PARQUE:
       return !e.diaCerrado && !e.enParque; // una vez por día (abre la jornada)
@@ -93,7 +112,9 @@ export function botonHabilitado(
         ? false // el externo no registra almuerzo; ni los países que no lo usan
         : !e.diaCerrado && e.enParque && !e.almuerzoHecho && !e.enTurbina; // una vez
     case EVENTO_TIPO.INICIO_STANDBY:
-      return !e.diaCerrado && e.enParque; // marca repetible (varios permitidos)
+      return !e.diaCerrado && e.enParque && !e.enStandby; // abre un período (repetible)
+    case EVENTO_TIPO.FIN_STANDBY:
+      return !e.diaCerrado && e.enStandby; // solo si hay un stand-by abierto
     case EVENTO_TIPO.SALIDA_PARQUE:
       return !e.diaCerrado && e.enParque; // cierra el día
     case EVENTO_TIPO.FINALIZAR_PARQUE:
