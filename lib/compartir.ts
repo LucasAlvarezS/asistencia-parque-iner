@@ -146,6 +146,17 @@ const CIERRAN_AERO: (EventoTipo | string)[] = [
   EVENTO_TIPO.FINALIZAR_PARQUE,
 ];
 
+/** Cierre real de la turbina abierta en `desdeIndice`: busca hacia adelante saltando
+ *  cualquier stand-by intercalado (la máquina de estados no permite otro entrada_wtg
+ *  en el medio, solo pares inicio/fin de stand-by) hasta el salida_wtg/salida_parque/
+ *  finalizar_parque real. Sin esto, un stand-by a mitad de turbina "tapaba" el RUN. */
+function cierreDeAero(orden: EventoResumen[], desdeIndice: number): EventoResumen | null {
+  for (let j = desdeIndice; j < orden.length; j++) {
+    if (CIERRAN_AERO.includes(orden[j].tipo)) return orden[j];
+  }
+  return null;
+}
+
 /** Etiqueta del stand-by: "Clima -> Lluvia/llovizna" (sub-motivo en motivoOtro),
  *  el texto libre para "Otros", o la etiqueta del motivo en el resto. */
 function etiquetaStandby(motivo?: string | null, motivoOtro?: string | null): string {
@@ -175,9 +186,9 @@ export function resumenJornadaDesdeEventos(
     const e = orden[i];
     const sig = orden[i + 1];
     if (e.tipo === EVENTO_TIPO.ENTRADA_WTG) {
-      const cierra = sig != null && CIERRAN_AERO.includes(sig.tipo);
+      const cierre = cierreDeAero(orden, i + 1);
       const wtg = e.numero ?? resolverWtg?.(e.maquinaId) ?? null;
-      turbinas.push({ wtg, stop: hhmm(e.ts), run: cierra ? hhmm(sig.ts) : SIN_HORA });
+      turbinas.push({ wtg, stop: hhmm(e.ts), run: cierre ? hhmm(cierre.ts) : SIN_HORA });
     } else if (e.tipo === EVENTO_TIPO.INICIO_STANDBY) {
       standbys.push({
         etiqueta: etiquetaStandby(e.motivo, e.motivoOtro),
@@ -205,9 +216,6 @@ export function textoResumenJornada(d: ResumenJornada): string {
   ];
   for (const t of d.turbinas) {
     lineas.push(`${t.wtg != null ? `WTG ${t.wtg}` : "WTG —"}: STOP: ${t.stop} - RUN: ${t.run}`);
-  }
-  for (const s of d.standbys) {
-    lineas.push(`Stand-By: ${s.etiqueta}`, `Hora inicio: ${s.inicio}`, `Hora fin: ${s.fin}`);
   }
   if (d.salida) lineas.push(`Salida del parque: ${d.salida}`);
   lineas.push(`Fecha: ${d.fecha}`);
@@ -292,14 +300,14 @@ export function resumenInternoDesdeEventos(
     } else if (e.tipo === EVENTO_TIPO.TRASLADO_MAQUINA) {
       ultimoTraslado = hhmm(e.ts);
     } else if (e.tipo === EVENTO_TIPO.ENTRADA_WTG) {
-      const cierra = sig != null && CIERRAN_AERO.includes(sig.tipo);
+      const cierre = cierreDeAero(orden, i + 1);
       const wtg = e.numero ?? resolverWtg?.(e.maquinaId) ?? null;
       turbinas.push({
         wtg,
         traslado: ultimoTraslado ?? SIN_HORA,
         subida: hhmm(e.ts),
-        salida: cierra ? hhmm(sig.ts) : SIN_HORA,
-        palas: cierra && sig.tipo === EVENTO_TIPO.SALIDA_WTG ? (sig.palas ?? null) : null,
+        salida: cierre ? hhmm(cierre.ts) : SIN_HORA,
+        palas: cierre?.tipo === EVENTO_TIPO.SALIDA_WTG ? (cierre.palas ?? null) : null,
       });
       ultimoTraslado = null; // el traslado aplica a una sola subida
     } else if (e.tipo === EVENTO_TIPO.INICIO_STANDBY) {
@@ -348,17 +356,6 @@ export function textoResumenInterno(d: ResumenInterno): string {
     );
     if (t.palas != null) lineas.push(`Palas: ${textoPalas(t.palas)}`);
   }
-  if (d.standbys.length > 0) {
-    lineas.push(SEP);
-    for (const s of d.standbys) {
-      lineas.push(
-        `Stand-By Motivo: ${s.motivo}`,
-        `Hora de inicio SB: ${s.inicio}`,
-        `Hora fin SB: ${s.fin}`,
-      );
-    }
-    lineas.push(SEP);
-  }
-  if (d.salida) lineas.push(`Salida de Parque: ${d.salida}`);
+  if (d.salida) lineas.push(SEP, `Salida de Parque: ${d.salida}`);
   return lineas.join("\n");
 }
