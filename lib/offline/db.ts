@@ -57,9 +57,37 @@ export function abrirDB(): Promise<IDBPDatabase<CheckinDB>> {
         if (!db.objectStoreNames.contains("catalogo")) db.createObjectStore("catalogo");
         if (!db.objectStoreNames.contains("sesion")) db.createObjectStore("sesion");
       },
+      // El navegador puede cerrar la conexión de forma anómala (app en segundo
+      // plano en el celular, `versionchange` desde otra pestaña, presión de
+      // memoria). La promesa cacheada queda inservible y toda transacción falla
+      // con "The database connection is closing". Reseteamos el cache para que la
+      // próxima abrirDB() reabra una conexión fresca.
+      terminated() {
+        dbPromise = null;
+      },
+    });
+    // Si la apertura misma falla, no dejar cacheada una promesa rechazada.
+    dbPromise.catch(() => {
+      dbPromise = null;
     });
   }
   return dbPromise;
+}
+
+/** Corre una operación contra la base y, si la conexión se estaba cerrando
+ *  (error típico al volver de segundo plano en el celular), la reabre y reintenta
+ *  UNA vez. Evita perder la mutación del operador por una conexión muerta. */
+async function conDB<T>(fn: (db: IDBPDatabase<CheckinDB>) => Promise<T>): Promise<T> {
+  try {
+    return await fn(await abrirDB());
+  } catch (err) {
+    const cerrando =
+      err instanceof DOMException &&
+      (err.name === "InvalidStateError" || /clos(ing|ed)/i.test(err.message));
+    if (!cerrando) throw err;
+    dbPromise = null; // fuerza reapertura de una conexión fresca
+    return fn(await abrirDB());
+  }
 }
 
 // Secuencia monótona para ordenar el vaciado (jornada antes que sus eventos).
@@ -74,53 +102,53 @@ export async function encolar(
   item: Omit<OutboxItem, "seq" | "creado_ts">,
   sobrescribir = false,
 ): Promise<void> {
-  const db = await abrirDB();
-  const existente = await db.get("outbox", item.id);
-  if (existente && !sobrescribir) return;
-  await db.put("outbox", {
-    ...item,
-    seq: existente?.seq ?? siguienteSeq(),
-    creado_ts: new Date().toISOString(),
+  return conDB(async (db) => {
+    const existente = await db.get("outbox", item.id);
+    if (existente && !sobrescribir) return;
+    await db.put("outbox", {
+      ...item,
+      seq: existente?.seq ?? siguienteSeq(),
+      creado_ts: new Date().toISOString(),
+    });
   });
 }
 
 /** Ítems pendientes, en orden de creación. */
 export async function outboxOrdenado(): Promise<OutboxItem[]> {
-  const db = await abrirDB();
-  return db.getAllFromIndex("outbox", "by_seq");
+  return conDB((db) => db.getAllFromIndex("outbox", "by_seq"));
 }
 
 export async function outboxBorrar(id: string): Promise<void> {
-  const db = await abrirDB();
-  await db.delete("outbox", id);
+  return conDB(async (db) => {
+    await db.delete("outbox", id);
+  });
 }
 
 export async function outboxExiste(id: string): Promise<boolean> {
-  const db = await abrirDB();
-  return (await db.getKey("outbox", id)) !== undefined;
+  return conDB(async (db) => (await db.getKey("outbox", id)) !== undefined);
 }
 
 /** Cantidad de mutaciones pendientes de sincronizar (eventos + fotos). */
 export async function pendientes(): Promise<number> {
-  const db = await abrirDB();
-  return (await db.count("outbox")) + (await db.count("fotos"));
+  return conDB(async (db) => (await db.count("outbox")) + (await db.count("fotos")));
 }
 
 // ---------- Fotos de evidencia pendientes ----------
 
 export async function fotoEncolar(foto: FotoPendiente): Promise<void> {
-  const db = await abrirDB();
-  await db.put("fotos", foto);
+  return conDB(async (db) => {
+    await db.put("fotos", foto);
+  });
 }
 
 export async function fotosPendientes(): Promise<FotoPendiente[]> {
-  const db = await abrirDB();
-  return db.getAll("fotos");
+  return conDB((db) => db.getAll("fotos"));
 }
 
 export async function fotoBorrar(eventoId: string): Promise<void> {
-  const db = await abrirDB();
-  await db.delete("fotos", eventoId);
+  return conDB(async (db) => {
+    await db.delete("fotos", eventoId);
+  });
 }
 
 // ---------- Cache genérico (catalogo / sesion) ----------
@@ -130,14 +158,14 @@ export async function cacheSet(
   key: string,
   value: unknown,
 ): Promise<void> {
-  const db = await abrirDB();
-  await db.put(store, value, key);
+  return conDB(async (db) => {
+    await db.put(store, value, key);
+  });
 }
 
 export async function cacheGet<T>(
   store: "catalogo" | "sesion",
   key: string,
 ): Promise<T | undefined> {
-  const db = await abrirDB();
-  return (await db.get(store, key)) as T | undefined;
+  return conDB(async (db) => (await db.get(store, key)) as T | undefined);
 }
