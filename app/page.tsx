@@ -34,33 +34,30 @@ export default function Page() {
     const supabase = createClient();
     const [perfil, asignacion] = await Promise.all([leerPerfil(), leerAsignacion()]);
 
-    // getSession puede fallar sin red (refresh de un token vencido): eso NUNCA
-    // debe botar al login si hay perfil cacheado — la app opera offline y el
-    // token se refresca solo al volver la conexión (el sync exige sesión).
+    // getSession() puede devolver null por un refresh de token fallido con señal
+    // débil: en el parque `navigator.onLine` da falso positivo (interfaz de red
+    // arriba, sin internet real), así que NO se puede usar como criterio de
+    // offline. Con perfil cacheado el operador NUNCA debe caer a login por un
+    // getSession() nulo — la app opera offline y el sync re-autentica al volver
+    // la conexión (sin sesión, el sync deja la cola intacta y reintenta luego).
     let conSesion = false;
     try {
       conSesion = !!(await supabase.auth.getSession()).data.session;
     } catch {
-      // Sin red: decide el cache local.
+      // Sin red / refresh fallido: decide el cache local.
     }
 
-    const offline = !navigator.onLine;
-    if (!conSesion && !(perfil && offline)) {
-      // Sin sesión y con red (o sin nada cacheado): hay que loguearse.
-      setEstado("login");
-      return;
-    }
     if (!perfil) {
-      // Sesión sin perfil cacheado (p.ej. logout offline que no pudo revocar el
-      // token): re-login para rehidratar el perfil, en vez de un onboarding roto.
+      // Sin perfil cacheado no se puede operar: al login (con sesión rehidrata el
+      // perfil; sin sesión, autentica). Único camino al login.
       setEstado("login");
       return;
     }
 
     // Revalida la asignación cacheada contra el server (evita quedar en un parque
-    // ya finalizado/borrado por fuera). Solo con conexión y solo si el server
+    // ya finalizado/borrado por fuera). Solo con sesión y red y si el server
     // responde sin error: offline o ante fallo transitorio, se respeta el cache.
-    if (asignacion && conSesion && !offline) {
+    if (asignacion && conSesion && navigator.onLine) {
       try {
         const { data: activa, error } = await supabase
           .from("asignaciones")
