@@ -11,7 +11,7 @@
 import { type DBSchema, type IDBPDatabase, openDB } from "idb";
 
 export const DB_NOMBRE = "iner-checkin";
-export const DB_VERSION = 2;
+export const DB_VERSION = 4;
 
 export type Tabla = "asignaciones" | "jornadas" | "eventos";
 
@@ -34,9 +34,38 @@ export interface FotoPendiente {
   creado_ts: string;
 }
 
+/** Foto de pala (interno): BSN o ROOT de una pala A/B/C. A diferencia de `fotos`
+ *  (una por evento, evidencia externa), acá hay VARIAS por turbina (hasta 6: 3
+ *  palas × BSN+root). Se suben a Google Drive vía /api/subir-foto en sync(). */
+export interface FotoPalaPendiente {
+  id: string; // key idempotente: `${evento_id}:${pala}:${tipo}` → reintentar/rehacer no duplica
+  evento_id: string; // salida_wtg de la turbina (gatea la subida tras sincronizar el evento)
+  parque_id: string;
+  wtg: number;
+  pala: string; // "A" | "B" | "C"
+  tipo: "bsn" | "root";
+  blob: Blob; // JPEG ya comprimido
+  creado_ts: string;
+}
+
+/** Foto capturada mientras una turbina sigue abierta. Se convierte en
+ * FotoPalaPendiente al registrar la salida de la turbina. */
+export interface FotoPalaBorrador {
+  id: string;
+  clave_aero: string;
+  parque_id: string;
+  wtg: number;
+  pala: string;
+  tipo: "bsn" | "root";
+  blob: Blob;
+  creado_ts: string;
+}
+
 interface CheckinDB extends DBSchema {
   outbox: { key: string; value: OutboxItem; indexes: { by_seq: number } };
   fotos: { key: string; value: FotoPendiente };
+  fotosPalas: { key: string; value: FotoPalaPendiente };
+  fotosPalasBorradores: { key: string; value: FotoPalaBorrador };
   catalogo: { key: string; value: unknown };
   sesion: { key: string; value: unknown };
 }
@@ -56,6 +85,13 @@ export function abrirDB(): Promise<IDBPDatabase<CheckinDB>> {
         }
         if (!db.objectStoreNames.contains("catalogo")) db.createObjectStore("catalogo");
         if (!db.objectStoreNames.contains("sesion")) db.createObjectStore("sesion");
+        // v3: fotos de palas del interno (BSN/root), varias por turbina.
+        if (!db.objectStoreNames.contains("fotosPalas")) {
+          db.createObjectStore("fotosPalas", { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains("fotosPalasBorradores")) {
+          db.createObjectStore("fotosPalasBorradores", { keyPath: "id" });
+        }
       },
       // El navegador puede cerrar la conexión de forma anómala (app en segundo
       // plano en el celular, `versionchange` desde otra pestaña, presión de
@@ -128,9 +164,12 @@ export async function outboxExiste(id: string): Promise<boolean> {
   return conDB(async (db) => (await db.getKey("outbox", id)) !== undefined);
 }
 
-/** Cantidad de mutaciones pendientes de sincronizar (eventos + fotos). */
+/** Cantidad de mutaciones pendientes de sincronizar (eventos + fotos + fotos de palas). */
 export async function pendientes(): Promise<number> {
-  return conDB(async (db) => (await db.count("outbox")) + (await db.count("fotos")));
+  return conDB(
+    async (db) =>
+      (await db.count("outbox")) + (await db.count("fotos")) + (await db.count("fotosPalas")),
+  );
 }
 
 // ---------- Fotos de evidencia pendientes ----------
@@ -148,6 +187,77 @@ export async function fotosPendientes(): Promise<FotoPendiente[]> {
 export async function fotoBorrar(eventoId: string): Promise<void> {
   return conDB(async (db) => {
     await db.delete("fotos", eventoId);
+  });
+}
+
+// ---------- Fotos de palas (interno: BSN/root) ----------
+
+/** Encola (o reemplaza) una foto de pala. La `id` idempotente hace que rehacer una
+ *  foto de la misma pala/tipo sobrescriba en vez de duplicar. */
+export async function fotoPalaEncolar(foto: FotoPalaPendiente): Promise<void> {
+  return conDB(async (db) => {
+    await db.put("fotosPalas", foto);
+  });
+}
+
+export async function fotosPalasPendientes(): Promise<FotoPalaPendiente[]> {
+  return conDB((db) => db.getAll("fotosPalas"));
+}
+
+export async function fotoPalaBorrar(id: string): Promise<void> {
+  return conDB(async (db) => {
+    await db.delete("fotosPalas", id);
+  });
+}
+
+/** Ids de fotos de palas ya encoladas para un evento (para pintar el checklist). */
+export async function fotosPalasDeEvento(eventoId: string): Promise<string[]> {
+  return conDB(async (db) => {
+    const todas = await db.getAll("fotosPalas");
+    return todas.filter((f) => f.evento_id === eventoId).map((f) => f.id);
+  });
+}
+
+// ---------- Borradores de fotos mientras la turbina sigue abierta ----------
+
+export async function fotoPalaBorradorEncolar(foto: FotoPalaBorrador): Promise<void> {
+  return conDB(async (db) => {
+    await db.put("fotosPalasBorradores", foto);
+  });
+}
+
+export async function fotosPalasBorradoresDeAero(claveAero: string): Promise<FotoPalaBorrador[]> {
+  return conDB(async (db) => {
+    const todas = await db.getAll("fotosPalasBorradores");
+    return todas.filter((foto) => foto.clave_aero === claveAero);
+  });
+}
+
+export async function fotosPalasBorradoresBorrarDeAero(claveAero: string): Promise<void> {
+  return conDB(async (db) => {
+    const todas = await db.getAll("fotosPalasBorradores");
+    const tx = db.transaction("fotosPalasBorradores", "readwrite");
+    await Promise.all(
+      todas
+        .filter((foto) => foto.clave_aero === claveAero)
+        .map((foto) => tx.store.delete(foto.id)),
+    );
+    await tx.done;
+  });
+}
+
+/** Borra borradores más viejos que `dias` (turbinas capturadas pero nunca cerradas:
+ *  al dar salida se convierten en pendientes; si el operador nunca da salida, quedan
+ *  huérfanos y se limpian acá). Se corre al entrar al check-in. */
+export async function purgarBorradoresViejos(dias = 7): Promise<void> {
+  const limite = Date.now() - dias * 24 * 60 * 60 * 1000;
+  return conDB(async (db) => {
+    const todas = await db.getAll("fotosPalasBorradores");
+    const viejos = todas.filter((foto) => new Date(foto.creado_ts).getTime() < limite);
+    if (viejos.length === 0) return;
+    const tx = db.transaction("fotosPalasBorradores", "readwrite");
+    await Promise.all(viejos.map((foto) => tx.store.delete(foto.id)));
+    await tx.done;
   });
 }
 

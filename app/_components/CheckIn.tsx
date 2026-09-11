@@ -44,6 +44,7 @@ import {
   textoResumenJornada,
 } from "@/lib/compartir";
 import { fechaHoy, horaEstablecidaISO, horaLocal } from "@/lib/tiempo";
+import { comprimirFoto } from "@/lib/imagen";
 import { refrescarEquipoMiembros } from "@/lib/equipo";
 import { createClient } from "@/lib/supabase/client";
 import { deshacerSalidaParque, registrarEvento } from "@/lib/offline/registrarEvento";
@@ -80,6 +81,14 @@ import {
   limpiarSesion,
 } from "@/lib/offline/sesion";
 import { sync } from "@/lib/offline/sync";
+import {
+  fotosPalasBorradoresBorrarDeAero,
+  fotoPalaBorradorEncolar,
+  fotoPalaEncolar,
+  fotosPalasBorradoresDeAero,
+  purgarBorradoresViejos,
+  type FotoPalaPendiente,
+} from "@/lib/offline/db";
 import { ClimaChip } from "./ClimaChip";
 import { ModalCompartir, ModalEvidencia } from "./Evidencia";
 import { Overlay } from "./Overlay";
@@ -131,6 +140,7 @@ const CLIMA_MOTIVO_ICON: Record<ClimaMotivo, Icono> = {
 type Modal =
   | null
   | "aero"
+  | "fotos-palas"
   | "evidencia-stop"
   | "evidencia-run"
   | "salida-wtg"
@@ -148,6 +158,12 @@ interface Compartible {
   texto: string;
   blob: Blob | null;
   nombreArchivo: string;
+}
+
+interface FotoPalaCapturada {
+  pala: Pala;
+  tipo: "bsn" | "root";
+  blob: Blob;
 }
 
 export function CheckIn({
@@ -172,6 +188,7 @@ export function CheckIn({
   const [aeros, setAeros] = useState<AeroCache[]>([]);
   const [estado, setEstado] = useState<EstadoJornada>(ESTADO_INICIAL);
   const [modal, setModal] = useState<Modal>(null);
+  const [fotosPala, setFotosPala] = useState<FotoPalaCapturada[]>([]);
   const [busy, setBusy] = useState(false);
   const [ultimo, setUltimo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -191,6 +208,31 @@ export function CheckIn({
   const [cavidades, setCavidades] = useState<CavidadesPorAero>({});
 
   const externo = subtipo === SUBTIPO.INSPECTOR_EXTERNO;
+
+  // Reconstruye el contador de fotos del aero abierto desde los borradores
+  // persistidos (el estado en memoria se pierde si la app se recarga o va a
+  // segundo plano). Es cosmético: la conversión real en la salida también lee los
+  // borradores, así que las fotos no se pierden aunque el contador no se cargue.
+  useEffect(() => {
+    if (subtipo !== SUBTIPO.INTERNO || !aeroActual || !asignacion) {
+      setFotosPala([]);
+      return;
+    }
+    let activo = true;
+    const clave = `${asignacion.id}_${fechaHoy(asignacion.tz)}:${aeroActual.id}`;
+    void fotosPalasBorradoresDeAero(clave).then((borradores) => {
+      if (!activo) return;
+      setFotosPala(borradores.map((f) => ({ pala: f.pala as Pala, tipo: f.tipo, blob: f.blob })));
+    });
+    return () => {
+      activo = false;
+    };
+  }, [subtipo, aeroActual?.id, asignacion?.id, asignacion?.tz]);
+
+  // Limpieza de borradores de fotos huérfanos (turbinas capturadas sin salida).
+  useEffect(() => {
+    void purgarBorradoresViejos();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -577,9 +619,26 @@ export function CheckIn({
           </p>
         )}
         {estado.enTurbina && (
+          <>
           <p className="-mt-2 text-center text-xs text-iner-gray">
             Registrá <strong>{etq(EVENTO_TIPO.SALIDA_WTG)}</strong> para cerrar el aero.
           </p>
+          {subtipo === SUBTIPO.INTERNO && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setModal("fotos-palas")}
+              className="mt-2 w-full rounded-xl border border-iner-green/35 bg-iner-green-50 px-4 py-3 text-sm font-bold text-iner-green transition hover:bg-iner-green-100 disabled:opacity-40"
+            >
+              Tomar foto
+              {fotosPala.length > 0 && (
+                <span className="ml-2 text-xs font-semibold text-iner-gray">
+                  · {fotosPala.length}/6 listas
+                </span>
+              )}
+            </button>
+          )}
+          </>
         )}
         {requiereTecnico && tecnicoAcompanante ? (
           <button
@@ -708,16 +767,55 @@ export function CheckIn({
           busy={busy}
           onCerrar={() => setModal(null)}
           onConfirmar={(nuevas) => {
+            const aeroSalida = aeroActual;
             void registrar(
               {
                 tipo: EVENTO_TIPO.SALIDA_WTG,
-                maquinaId: aeroActual.id,
+                maquinaId: aeroSalida.id,
                 palas: nuevas,
               },
-              `${etq(EVENTO_TIPO.SALIDA_WTG)} · ${aeroActual.nombre ?? `WTG ${aeroActual.numero}`}`,
-            ).then((res) => {
-              if (res) setAeroActual(null);
+              `${etq(EVENTO_TIPO.SALIDA_WTG)} · ${aeroSalida.nombre ?? `WTG ${aeroSalida.numero}`}`,
+            ).then(async (res) => {
+              if (!res) return;
+              if (subtipo === SUBTIPO.INTERNO && asignacion) {
+                // Se arman desde los BORRADORES persistidos del aero (no del estado
+                // en memoria): así las fotos sobreviven si la app se recargó o quedó
+                // en segundo plano entre capturar y registrar la salida.
+                const claveAero = `${asignacion.id}_${fechaHoy(asignacion.tz)}:${aeroSalida.id}`;
+                const borradores = await fotosPalasBorradoresDeAero(claveAero);
+                const creadas = borradores.map(
+                  (foto): FotoPalaPendiente => ({
+                    id: `${res.id}:${foto.pala}:${foto.tipo}`,
+                    evento_id: res.id,
+                    parque_id: asignacion.parque_id,
+                    wtg: aeroSalida.numero,
+                    pala: foto.pala,
+                    tipo: foto.tipo,
+                    blob: foto.blob,
+                    creado_ts: res.ts,
+                  }),
+                );
+                await Promise.all(creadas.map((foto) => fotoPalaEncolar(foto)));
+                // Recién ahora se borran los borradores (ya encolados como pendientes).
+                await fotosPalasBorradoresBorrarDeAero(claveAero);
+                void sync();
+              }
+              setFotosPala([]);
+              setAeroActual(null);
             });
+          }}
+        />
+      )}
+      {modal === "fotos-palas" && subtipo === SUBTIPO.INTERNO && aeroActual && (
+        <ModalFotosPalas
+          fotosIniciales={fotosPala}
+          claveAero={`${asignacion?.id}_${asignacion ? fechaHoy(asignacion.tz) : ""}:${aeroActual.id}`}
+          parqueId={asignacion?.parque_id ?? ""}
+          wtg={aeroActual.numero}
+          onCerrar={() => setModal(null)}
+          onGuardar={(fotos) => {
+            setFotosPala(fotos);
+            setModal(null);
           }}
         />
       )}
@@ -972,6 +1070,160 @@ function ModalAero({
           </div>
         </>
       )}
+    </Overlay>
+  );
+}
+
+function ModalFotosPalas({
+  fotosIniciales,
+  claveAero,
+  parqueId,
+  wtg,
+  onGuardar,
+  onCerrar,
+}: {
+  fotosIniciales: FotoPalaCapturada[];
+  claveAero: string;
+  parqueId: string;
+  wtg: number;
+  onGuardar: (fotos: FotoPalaCapturada[]) => void;
+  onCerrar: () => void;
+}) {
+  const iniciales: Partial<Record<`${Pala}:${"bsn" | "root"}`, Blob>> = {};
+  for (const foto of fotosIniciales) iniciales[`${foto.pala}:${foto.tipo}`] = foto.blob;
+  const [fotos, setFotos] = useState<
+    Partial<Record<`${Pala}:${"bsn" | "root"}`, Blob>>
+  >(iniciales);
+  const [procesando, setProcesando] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let activo = true;
+    void fotosPalasBorradoresDeAero(claveAero)
+      .then((borradores) => {
+        if (!activo || borradores.length === 0) return;
+        setFotos((actuales) => {
+          const combinadas: Partial<Record<`${Pala}:${"bsn" | "root"}`, Blob>> = {
+            ...actuales,
+          };
+          for (const foto of borradores) {
+            const clave = `${foto.pala}:${foto.tipo}` as `${Pala}:${"bsn" | "root"}`;
+            combinadas[clave] = foto.blob;
+          }
+          return combinadas;
+        });
+      })
+      .catch(() => setError("No se pudieron recuperar las fotos guardadas."));
+    return () => {
+      activo = false;
+    };
+  }, [claveAero]);
+
+  async function tomarFoto(pala: Pala, tipo: "bsn" | "root", file?: File) {
+    if (!file) return;
+    const clave = `${pala}:${tipo}` as const;
+    setProcesando(clave);
+    setError(null);
+    try {
+      const blob = await comprimirFoto(file);
+      setFotos((actuales) => ({ ...actuales, [clave]: blob }));
+      await fotoPalaBorradorEncolar({
+        id: `${claveAero}:${pala}:${tipo}`,
+        clave_aero: claveAero,
+        parque_id: parqueId,
+        wtg,
+        pala,
+        tipo,
+        blob,
+        creado_ts: new Date().toISOString(),
+      });
+    } catch {
+      setError("No se pudo procesar la foto. Probá de nuevo.");
+    } finally {
+      setProcesando(null);
+    }
+  }
+
+  function confirmar() {
+    const listas: FotoPalaCapturada[] = PALAS.flatMap((pala) =>
+      (["bsn", "root"] as const).flatMap((tipo) => {
+        const blob = fotos[`${pala}:${tipo}`];
+        return blob ? [{ pala, tipo, blob }] : [];
+      }),
+    );
+    onGuardar(listas);
+  }
+
+  const cantidad = Object.keys(fotos).length;
+
+  return (
+    <Overlay>
+      <div className="mb-1 flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-bold">Tomar foto</h2>
+          <p className="text-xs text-iner-gray">BSN / ROOT · {cantidad}/6 listas</p>
+        </div>
+        <button type="button" onClick={onCerrar} className="text-sm text-iner-gray">
+          Cancelar
+        </button>
+      </div>
+      <p className="mb-3 text-sm text-iner-gray">
+        Sacá cada foto mientras estás frente a la pala. Podés volver a tocar una opción para reemplazarla.
+      </p>
+      {error && (
+        <p className="mb-3 rounded-lg border border-red-500/30 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {error}
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        {PALAS.flatMap((pala) =>
+          (["bsn", "root"] as const).map((tipo) => {
+            const clave = `${pala}:${tipo}` as const;
+            const lista = fotos[clave] != null;
+            return (
+              <label
+                key={clave}
+                role="button"
+                tabIndex={procesando != null ? -1 : 0}
+                aria-label={`Tomar foto Pala ${pala} ${tipo.toUpperCase()}`}
+                className={`flex cursor-pointer items-center justify-between rounded-xl border px-3 py-3 text-left transition ${
+                  lista
+                    ? "border-iner-ok/40 bg-iner-ok-50 text-iner-ok"
+                    : "border-black/10 bg-iner-gray-100 text-foreground hover:bg-iner-gray-100/70"
+                } ${procesando != null ? "pointer-events-none opacity-60" : ""}`}
+              >
+                <span>
+                  <span className="block text-sm font-bold">Pala {pala}</span>
+                  <span className="block text-[11px] uppercase tracking-wide text-iner-gray">
+                    {tipo}
+                  </span>
+                </span>
+                <span className="text-sm font-bold">
+                  {procesando === clave ? "…" : lista ? "✓" : "Tomar"}
+                </span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  disabled={procesando != null}
+                  onChange={(e) => {
+                    void tomarFoto(pala, tipo, e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            );
+          }),
+        )}
+      </div>
+      <button
+        type="button"
+        disabled={procesando != null}
+        onClick={confirmar}
+        className="btn-primary mt-4 w-full disabled:opacity-40"
+      >
+        Guardar fotos
+      </button>
     </Overlay>
   );
 }
