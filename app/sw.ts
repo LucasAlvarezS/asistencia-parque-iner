@@ -32,3 +32,48 @@ const serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+// ---------- Avisos push (técnico jefe, ver app/api/avisos) ----------
+// iOS exige que TODO push muestre una notificación (userVisibleOnly): si no, Safari
+// revoca la suscripción. Por eso siempre se muestra algo, aunque el payload falle.
+interface AvisoPush {
+  title?: string;
+  body?: string;
+  tag?: string;
+  url?: string;
+}
+
+self.addEventListener("push", (event) => {
+  let aviso: AvisoPush = {};
+  try {
+    aviso = (event.data?.json() as AvisoPush) ?? {};
+  } catch {
+    aviso = { body: event.data?.text() };
+  }
+  event.waitUntil(
+    self.registration.showNotification(aviso.title ?? "INER Check-in", {
+      body: aviso.body ?? "",
+      tag: aviso.tag,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      data: { url: aviso.url ?? "/" },
+    }),
+  );
+});
+
+// Tocar la notificación: enfoca la app si ya está abierta; si no, la abre.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data as { url?: string } | null)?.url ?? "/";
+  event.waitUntil(
+    (async () => {
+      const ventanas = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const abierta = ventanas[0];
+      if (abierta) {
+        await abierta.focus();
+        return;
+      }
+      await self.clients.openWindow(url);
+    })(),
+  );
+});

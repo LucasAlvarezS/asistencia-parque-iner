@@ -94,6 +94,7 @@ import { ModalCompartir, ModalEvidencia } from "./Evidencia";
 import { Overlay } from "./Overlay";
 import { ModalResumenDia } from "./ResumenDia";
 import { SyncIndicator } from "./SyncIndicator";
+import { AvisosJefe } from "./AvisosJefe";
 import {
   IconBandera,
   IconCalendario,
@@ -575,6 +576,7 @@ export function CheckIn({
       </header>
 
       <div className="flex-1 space-y-4 p-4">
+        <AvisosJefe />
         {verClima && <ClimaChip onVer={onVerClima} />}
         {ultimo && (
           <p className="rounded-lg border border-iner-ok/30 bg-iner-ok-50 px-3 py-2 text-sm text-iner-ok">

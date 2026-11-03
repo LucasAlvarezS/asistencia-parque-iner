@@ -25,6 +25,7 @@ import {
   leerParques,
   leerPerfil,
 } from "@/lib/offline/sesion";
+import { AvisosJefe } from "./AvisosJefe";
 import { Hero } from "./Hero";
 
 export function Onboarding({
@@ -215,6 +216,7 @@ export function Onboarding({
               Sesión iniciada como: <strong>{nombreTecnico}</strong>
             </p>
           )}
+          <AvisosJefe className="mb-3" />
           {error && (
             <p className="mb-3 rounded-lg border border-iner-amber bg-iner-amber-50 px-3 py-2 text-sm text-[#9a6200]">
               {error}
