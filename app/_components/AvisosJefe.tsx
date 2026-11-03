@@ -148,21 +148,9 @@ export function AvisosJefe({ className = "" }: { className?: string }) {
     }
   }
 
-  async function probar() {
-    setMensaje("Enviando aviso de prueba…");
-    try {
-      const r = await fetch("/api/avisos/prueba", { method: "POST" });
-      if (r.ok) setMensaje("Aviso enviado. Debería llegarte en unos segundos.");
-      else if (r.status === 404) {
-        setMensaje("Este teléfono no está registrado. Vuelve a activar los avisos.");
-        setEstado("inactivo");
-      } else setMensaje("No se pudo enviar el aviso de prueba.");
-    } catch {
-      setMensaje("Sin conexión: no se pudo enviar el aviso de prueba.");
-    }
-  }
-
-  if (estado === "oculto") return null;
+  // Activos: la tarjeta desaparece (la suscripción se sigue refrescando al abrir
+  // la app). Solo reaparece si hay que hacer algo: activar, reinstalar o desbloquear.
+  if (estado === "oculto" || estado === "activo") return null;
 
   const caja = "rounded-xl border px-3 py-2 text-sm";
   return (
@@ -204,14 +192,6 @@ export function AvisosJefe({ className = "" }: { className?: string }) {
             {estado === "activando" ? "Activando…" : "Activar avisos"}
           </button>
         </>
-      )}
-      {estado === "activo" && (
-        <p className="mt-1 flex items-center justify-between gap-2">
-          <span>✓ Activos en este teléfono</span>
-          <button type="button" onClick={() => void probar()} className="text-xs underline">
-            Enviar prueba
-          </button>
-        </p>
       )}
       {mensaje && <p className="mt-1 text-xs">{mensaje}</p>}
     </div>
