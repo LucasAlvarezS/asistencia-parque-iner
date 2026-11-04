@@ -240,3 +240,37 @@ export function IconPocaLuz(p: IconProps) {
     </IconBase>
   );
 }
+
+export function IconChevronIzq(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <path d="m15 18-6-6 6-6" />
+    </IconBase>
+  );
+}
+
+export function IconChevronDer(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <path d="m9 18 6-6-6-6" />
+    </IconBase>
+  );
+}
+
+export function IconAlerta(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </IconBase>
+  );
+}
+
+export function IconCheck(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <path d="M20 6 9 17l-5-5" />
+    </IconBase>
+  );
+}

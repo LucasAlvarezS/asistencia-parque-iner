@@ -17,6 +17,7 @@ import {
   textoResumenArg,
 } from "@/lib/resumenArg";
 import { createClient } from "@/lib/supabase/client";
+import { IconAlerta, IconCheck, IconChevronDer, IconChevronIzq } from "./icons";
 import { Overlay } from "./Overlay";
 
 const LS_FLAG = "iner_ver_resumen_arg";
@@ -101,34 +102,34 @@ function ModalResumenArg({ onCerrar }: { onCerrar: () => void }) {
   const texto = textoResumenArg(fecha, filas);
   const abiertas = filas.filter((f) => f.jornada_abierta);
   const flecha =
-    "rounded-full bg-iner-gray-100 px-3 py-1 text-sm font-bold text-iner-gray transition hover:bg-iner-gray/20 disabled:opacity-30";
+    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-iner-gray-100 text-iner-gray transition hover:bg-iner-gray/20 disabled:opacity-30";
 
   return (
     <Overlay>
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-bold">Resumen Arg</h2>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            aria-label="Día anterior"
-            onClick={() => setFecha((f) => sumarDias(f, -1))}
-            className={flecha}
-          >
-            ◀
-          </button>
-          <span className="text-sm font-semibold tabular-nums">{fechaDMY(fecha)}</span>
-          <button
-            type="button"
-            aria-label="Día siguiente"
-            onClick={() => setFecha((f) => sumarDias(f, 1))}
-            disabled={fecha >= hoy}
-            className={flecha}
-          >
-            ▶
-          </button>
-        </div>
+      <h2 className="text-base font-bold">Resumen Arg</h2>
+      <div className="mt-3 flex items-center justify-center gap-3">
+        <button
+          type="button"
+          aria-label="Día anterior"
+          onClick={() => setFecha((f) => sumarDias(f, -1))}
+          className={flecha}
+        >
+          <IconChevronIzq size={18} />
+        </button>
+        <span className="min-w-[7rem] text-center text-sm font-semibold leading-none tabular-nums">
+          {fechaDMY(fecha)}
+        </span>
+        <button
+          type="button"
+          aria-label="Día siguiente"
+          onClick={() => setFecha((f) => sumarDias(f, 1))}
+          disabled={fecha >= hoy}
+          className={flecha}
+        >
+          <IconChevronDer size={18} />
+        </button>
       </div>
-      <p className="mt-1 text-sm text-iner-gray">
+      <p className="mt-3 text-sm text-iner-gray">
         Turbinas del día por operador de VESTAS AR. Copia el resumen para enviarlo.
       </p>
 
@@ -149,10 +150,13 @@ function ModalResumenArg({ onCerrar }: { onCerrar: () => void }) {
             {filas.length > 0 ? texto : "Sin operadores con actividad ese día."}
           </pre>
           {abiertas.length > 0 && (
-            <p className="mt-2 rounded-lg border border-iner-amber bg-iner-amber-50 px-3 py-2 text-xs text-[#9a6200]">
-              ⚠ Jornada sin cerrar:{" "}
-              {abiertas.map((f) => `${f.operador ?? "—"} (${f.parque})`).join(", ")}. El conteo
-              puede cambiar.
+            <p className="mt-2 flex items-start gap-2 rounded-lg border border-iner-amber bg-iner-amber-50 px-3 py-2 text-xs text-[#9a6200]">
+              <IconAlerta size={16} className="mt-px shrink-0" />
+              <span>
+                Jornada sin cerrar:{" "}
+                {abiertas.map((f) => `${f.operador ?? "—"} (${f.parque})`).join(", ")}. El conteo
+                puede cambiar.
+              </span>
             </p>
           )}
           {copiado === false && (
@@ -171,9 +175,16 @@ function ModalResumenArg({ onCerrar }: { onCerrar: () => void }) {
           type="button"
           disabled={estado !== "ok" || filas.length === 0}
           onClick={async () => setCopiado(await copiarTexto(texto))}
-          className="btn-primary flex-1 disabled:opacity-50"
+          className="btn-primary flex flex-1 items-center justify-center gap-1.5 disabled:opacity-50"
         >
-          {copiado ? "✓ Copiado" : "Copiar resumen"}
+          {copiado ? (
+            <>
+              <IconCheck size={16} />
+              Copiado
+            </>
+          ) : (
+            "Copiar resumen"
+          )}
         </button>
       </div>
     </Overlay>
