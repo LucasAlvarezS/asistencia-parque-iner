@@ -29,6 +29,9 @@ export default function Page() {
   // Panel de clima: ortogonal al gate, igual que verJornadas (solo se ofrece a
   // perfiles con ver_clima desde el check-in).
   const [verClima, setVerClima] = useState(false);
+  // Cambio de parque dentro de un predio: se remonta el check-in con la otra
+  // asignación (relee asignación, aeros y estado del día desde el cache).
+  const [checkinKey, setCheckinKey] = useState(0);
 
   const evaluar = useCallback(async () => {
     const supabase = createClient();
@@ -119,7 +122,9 @@ export default function Page() {
     );
   return (
     <CheckIn
+      key={checkinKey}
       onFinalizado={() => setEstado("onboarding")}
+      onRecargar={() => setCheckinKey((k) => k + 1)}
       onLogout={() => void evaluar()}
       onVerJornadas={() => setVerJornadas(true)}
       onVerClima={() => setVerClima(true)}

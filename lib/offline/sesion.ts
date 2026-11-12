@@ -44,6 +44,7 @@ export interface ParqueCache {
   lat: number | null;
   lon: number | null;
   foto_evidencia: boolean;
+  predio?: string | null; // parques del mismo predio se recorren juntos (0046)
 }
 
 // ---------- Perfil ----------
@@ -74,6 +75,7 @@ export async function limpiarSesion(): Promise<void> {
     cacheSet("sesion", "jornada_eventos", null),
     cacheSet("sesion", "jornada_detalle", null),
     cacheSet("sesion", "equipo_miembros", null),
+    cacheSet("sesion", "predio", null),
   ]);
 }
 
@@ -86,6 +88,7 @@ export async function limpiarAsignacionLocal(asignacionId: string): Promise<void
     cacheSet("sesion", "jornada_eventos", null),
     cacheSet("sesion", "jornada_detalle", null),
     cacheSet("sesion", "aero_actual", null),
+    cacheSet("sesion", `predio_slots:${asignacionId}`, null),
     limpiarInspeccionados(asignacionId),
   ]);
 }

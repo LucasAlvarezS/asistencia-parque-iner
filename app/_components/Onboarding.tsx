@@ -1,30 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   ESTADO_ASIGNACION,
   PAIS_LABEL,
   type Pais,
-  TZ_POR_PAIS,
   columnaParquePermitida,
 } from "@/lib/catalogos";
 import {
-  type EventoParaSiembra,
-  inspeccionadosDesdeEventos,
-  sembrarInspeccionados,
-} from "@/lib/offline/inspeccionados";
-import {
-  type AeroCache,
   type ParqueCache,
   type PaisesConfig,
-  guardarAeros,
-  guardarAsignacion,
   guardarPaisesConfig,
   guardarParques,
   leerParques,
   leerPerfil,
 } from "@/lib/offline/sesion";
+import { hidratarAsignaciones } from "@/lib/offline/predio";
 import { AvisosJefe } from "./AvisosJefe";
 import { Hero } from "./Hero";
 
@@ -42,49 +34,6 @@ export function Onboarding({
   const [creando, setCreando] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nombreTecnico, setNombreTecnico] = useState<string | null>(null);
-
-  const hidratarAsignacion = useCallback(
-    async (a: { id: string; parque_id: string; inicio_ts: string }, lista: ParqueCache[]) => {
-      const p = lista.find((x) => x.id === a.parque_id);
-      if (!p) return false;
-      const supabase = createClient();
-      const { data: aeros } = await supabase
-        .from("aeros")
-        .select("id, numero, nombre")
-        .eq("parque_id", p.id)
-        .order("orden")
-        .order("numero");
-      await guardarAeros(p.id, (aeros ?? []) as AeroCache[]);
-      await guardarAsignacion({
-        id: a.id,
-        parque_id: p.id,
-        parque_nombre: p.nombre,
-        pais: p.pais,
-        tz: TZ_POR_PAIS[p.pais],
-        inicio_ts: a.inicio_ts,
-        turbinas: p.turbinas ?? null,
-        lat: p.lat ?? null,
-        lon: p.lon ?? null,
-        foto_evidencia: p.foto_evidencia ?? false,
-      });
-      // Siembra el acumulado de cavidades inspeccionadas desde el server: cubre
-      // dispositivo nuevo o cache borrado con asignación en curso.
-      const { data: evs } = await supabase
-        .from("eventos")
-        .select("tipo, maquina_id, palas, ts_dispositivo, jornada_id, jornadas!inner(asignacion_id)")
-        .eq("jornadas.asignacion_id", a.id)
-        .in("tipo", ["entrada_wtg", "salida_wtg", "salida_parque", "finalizar_parque"])
-        .order("ts_dispositivo");
-      if (evs) {
-        await sembrarInspeccionados(
-          a.id,
-          inspeccionadosDesdeEventos(evs as unknown as EventoParaSiembra[]),
-        );
-      }
-      return true;
-    },
-    [],
-  );
 
   useEffect(() => {
     let vivo = true;
@@ -116,7 +65,7 @@ export function Onboarding({
         // de su flujo: la interna y la externa no visitan los mismos parques.
         let q = supabase
           .from("parques")
-          .select("id, nombre, pais, empresa_id, turbinas, lat, lon, foto_evidencia")
+          .select("id, nombre, pais, empresa_id, turbinas, lat, lon, foto_evidencia, predio")
           .eq("activo", true)
           .eq(columnaParquePermitida(perfil?.subtipo ?? null), true);
         if (perfil?.pais) q = q.eq("pais", perfil.pais);
@@ -129,16 +78,16 @@ export function Onboarding({
         setParques(lista);
         await guardarParques(lista);
 
-        // Reconcilia: si ya hay una asignación activa en el server (p.ej. dispositivo
-        // nuevo), la reusa y entra directo al check-in (evita doble activa, C4).
+        // Reconcilia: si ya hay asignaciones activas en el server (p.ej. dispositivo
+        // nuevo), las reusa y entra directo al check-in (evita doble activa, C4).
+        // Varias activas solo pasan dentro de un mismo predio (0046).
         if (perfil) {
           const { data: act } = await supabase
             .from("asignaciones")
             .select("id, parque_id, inicio_ts")
             .eq("tecnico_id", perfil.id)
-            .eq("estado", ESTADO_ASIGNACION.ACTIVA)
-            .maybeSingle();
-          if (act && (await hidratarAsignacion(act, lista))) {
+            .eq("estado", ESTADO_ASIGNACION.ACTIVA);
+          if (act?.length && (await hidratarAsignaciones(act, lista))) {
             if (vivo) onReady();
             return;
           }
@@ -155,47 +104,30 @@ export function Onboarding({
     return () => {
       vivo = false;
     };
-  }, [hidratarAsignacion, onReady]);
+  }, [onReady]);
 
-  async function elegir(p: ParqueCache) {
+  /** Crea la asignación del parque elegido (o una por cada parque del predio) y
+   *  entra al check-in. */
+  async function elegir(item: ItemParque) {
     setError(null);
-    setCreando(p.id);
+    setCreando(item.clave);
     try {
       if (!navigator.onLine) throw new Error("Elegir un parque requiere conexión.");
       const perfil = await leerPerfil();
-      if (!perfil) throw new Error("Perfil no disponible; volvé a iniciar sesión.");
+      if (!perfil) throw new Error("Perfil no disponible; vuelve a iniciar sesión.");
       const supabase = createClient();
 
-      const id = crypto.randomUUID();
       const inicio_ts = new Date().toISOString();
-      const { error } = await supabase.from("asignaciones").insert({
-        id,
+      const filas = item.parques.map((p) => ({
+        id: crypto.randomUUID(),
         tecnico_id: perfil.id,
         parque_id: p.id,
         estado: ESTADO_ASIGNACION.ACTIVA,
         inicio_ts,
-      });
+      }));
+      const { error } = await supabase.from("asignaciones").insert(filas);
       if (error) throw error;
-
-      const { data: aeros } = await supabase
-        .from("aeros")
-        .select("id, numero, nombre")
-        .eq("parque_id", p.id)
-        .order("orden")
-        .order("numero");
-      await guardarAeros(p.id, (aeros ?? []) as AeroCache[]);
-      await guardarAsignacion({
-        id,
-        parque_id: p.id,
-        parque_nombre: p.nombre,
-        pais: p.pais,
-        tz: TZ_POR_PAIS[p.pais],
-        inicio_ts,
-        turbinas: p.turbinas ?? null,
-        lat: p.lat ?? null,
-        lon: p.lon ?? null,
-        foto_evidencia: p.foto_evidencia ?? false,
-      });
+      await hidratarAsignaciones(filas, parques);
       onReady();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo crear la asignación.");
@@ -205,6 +137,7 @@ export function Onboarding({
   }
 
   const paises = [...new Set(parques.map((p) => p.pais))] as Pais[];
+  const items = itemsDeParques(parques);
 
   return (
     <main className="flex min-h-full flex-1 items-center justify-center px-4 py-10">
@@ -237,22 +170,31 @@ export function Onboarding({
                     {PAIS_LABEL[pais] ?? pais}
                   </p>
                   <ul className="divide-y divide-black/5 overflow-hidden rounded-lg border border-black/10">
-                    {parques
-                      .filter((p) => p.pais === pais)
-                      .map((p) => (
-                        <li key={p.id}>
+                    {items
+                      .filter((it) => it.pais === pais)
+                      .map((it) => (
+                        <li key={it.clave}>
                           <button
                             type="button"
                             disabled={creando !== null}
-                            onClick={() => elegir(p)}
+                            onClick={() => elegir(it)}
                             className="flex w-full items-center justify-between px-3 py-3 text-left transition hover:bg-iner-green-50 disabled:opacity-50"
                           >
-                            <span className="font-semibold text-foreground">{p.nombre}</span>
-                            <span className="text-xs text-iner-gray">
-                              {creando === p.id
+                            <span className="min-w-0">
+                              <span className="block font-semibold text-foreground">
+                                {it.nombre}
+                              </span>
+                              {it.parques.length > 1 && (
+                                <span className="block truncate text-xs text-iner-gray">
+                                  {it.parques.map((p) => p.nombre).join(" · ")}
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 text-xs text-iner-gray">
+                              {creando === it.clave
                                 ? "Creando…"
-                                : p.turbinas != null
-                                  ? `${p.turbinas} WTG`
+                                : it.turbinas != null
+                                  ? `${it.turbinas} WTG`
                                   : ""}
                             </span>
                           </button>
@@ -283,4 +225,35 @@ export function Onboarding({
       </div>
     </main>
   );
+}
+
+/** Opción de la lista: un parque suelto o un predio (varios parques juntos). */
+interface ItemParque {
+  clave: string;
+  nombre: string;
+  pais: Pais;
+  turbinas: number | null;
+  parques: ParqueCache[];
+}
+
+function itemsDeParques(parques: ParqueCache[]): ItemParque[] {
+  const items: ItemParque[] = [];
+  const porPredio = new Map<string, ItemParque>();
+  for (const p of parques) {
+    if (!p.predio) {
+      items.push({ clave: p.id, nombre: p.nombre, pais: p.pais, turbinas: p.turbinas, parques: [p] });
+      continue;
+    }
+    const clave = `predio:${p.pais}:${p.predio}`;
+    const it = porPredio.get(clave);
+    if (it) {
+      it.parques.push(p);
+      it.turbinas = it.turbinas != null && p.turbinas != null ? it.turbinas + p.turbinas : null;
+    } else {
+      const nuevo: ItemParque = { clave, nombre: p.predio, pais: p.pais, turbinas: p.turbinas, parques: [p] };
+      porPredio.set(clave, nuevo);
+      items.push(nuevo);
+    }
+  }
+  return items;
 }

@@ -82,6 +82,16 @@ import {
 } from "@/lib/offline/sesion";
 import { sync } from "@/lib/offline/sync";
 import {
+  type PredioCache,
+  cambiarParqueDelPredio,
+  cerrarDiaHermano,
+  guardarPredio,
+  hermanosConDiaAbierto,
+  leerPredio,
+  refrescarPredio,
+  seguirConOtroParqueDelPredio,
+} from "@/lib/offline/predio";
+import {
   fotosPalasBorradoresBorrarDeAero,
   fotoPalaBorradorEncolar,
   fotoPalaEncolar,
@@ -92,7 +102,7 @@ import {
 import { ClimaChip } from "./ClimaChip";
 import { ModalCompartir, ModalEvidencia } from "./Evidencia";
 import { Overlay } from "./Overlay";
-import { ModalResumenDia } from "./ResumenDia";
+import { ModalResumenDia, type ResumenParque } from "./ResumenDia";
 import { SyncIndicator } from "./SyncIndicator";
 import { AvisosJefe } from "./AvisosJefe";
 import {
@@ -169,16 +179,20 @@ interface FotoPalaCapturada {
 
 export function CheckIn({
   onFinalizado,
+  onRecargar,
   onLogout,
   onVerJornadas,
   onVerClima,
 }: {
   onFinalizado: () => void;
+  onRecargar: () => void; // remonta el check-in (cambio de parque dentro del predio)
   onLogout: () => void;
   onVerJornadas: () => void;
   onVerClima: () => void;
 }) {
   const [asignacion, setAsignacion] = useState<AsignacionCache | null>(null);
+  // Predio (0046): parques del mismo terreno que se recorren juntos. null = parque suelto.
+  const [predio, setPredio] = useState<PredioCache | null>(null);
   const [subtipo, setSubtipo] = useState<Subtipo | null>(null);
   const [nombreTecnico, setNombreTecnico] = useState<string | null>(null);
   const [empresaId, setEmpresaId] = useState<string | null>(null);
@@ -199,6 +213,11 @@ export function CheckIn({
   const [compartir, setCompartir] = useState<Compartible | null>(null);
   const [resumen, setResumen] = useState<string | null>(null); // texto ya armado
   const [resumenEsFinal, setResumenEsFinal] = useState(false);
+  // Resúmenes de los otros parques del predio cerrados con la misma salida.
+  const [resumenesPredio, setResumenesPredio] = useState<ResumenParque[]>([]);
+  // Finalizar un parque del predio con otro aún en curso: al cerrar el resumen se
+  // sigue en el otro parque en vez de volver a la selección.
+  const [sigueEnPredio, setSigueEnPredio] = useState(false);
   // Ventana de 10s para deshacer "Salida de parque" (nunca finalizar_parque —
   // ver ModalResumenDia). null = no aplica (finalizar_parque o ya deshecho).
   const [deshacerInfo, setDeshacerInfo] = useState<{ eventoId: string; jornadaId: string } | null>(
@@ -237,12 +256,26 @@ export function CheckIn({
 
   useEffect(() => {
     (async () => {
-      const [a, perfil, cfg] = await Promise.all([
+      const [a, perfil, cfg, pr] = await Promise.all([
         leerAsignacion(),
         leerPerfil(),
         leerPaisesConfig(),
+        leerPredio(),
       ]);
       setAsignacion(a ?? null);
+      setPredio(
+        pr && a && pr.asignaciones.length > 1 && pr.asignaciones.some((x) => x.id === a.id)
+          ? pr
+          : null,
+      );
+      // Con red: alinea el predio con el server (ej. se sumó el otro parque).
+      if (perfil && a && navigator.onLine) {
+        void refrescarPredio(perfil.id)
+          .then((cambio) => {
+            if (cambio) onRecargar();
+          })
+          .catch(() => {});
+      }
       setSubtipo(perfil?.subtipo ?? null);
       setNombreTecnico(perfil?.nombre ?? null);
       setEmpresaId(perfil?.empresa_id ?? null);
@@ -353,45 +386,94 @@ export function CheckIn({
     const res = await registrar({ tipo, tsOverride: opts?.tsOverride,
       motivo: opts?.standby?.motivo, motivoOtro: opts?.standby?.motivoOtro }, etq(tipo));
     if (!res || !asignacion) return;
-    const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
-    const numeroDe = (maquinaId: string | null | undefined) =>
-      aeros.find((a) => a.id === maquinaId)?.numero ?? null;
-    const nombreDe = (maquinaId: string | null | undefined) =>
-      aeros.find((a) => a.id === maquinaId)?.nombre ?? null;
+    // Predio: la salida cierra el día en todos sus parques (misma hora) y se arma
+    // un resumen por parque. Finalizar cierra solo el parque actual.
+    const extra: ResumenParque[] = [];
+    if (predio && tipo === EVENTO_TIPO.SALIDA_PARQUE) {
+      try {
+        for (const h of await hermanosConDiaAbierto()) {
+          const r = await cerrarDiaHermano(h, res.ts);
+          const lista = (await leerAeros(h.parque_id)) ?? [];
+          extra.push({
+            titulo: h.parque_nombre,
+            texto: await textoResumenDe(h, [...r.eventos, { tipo, ts: r.ts }], lista),
+          });
+        }
+        void sync();
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? `No se pudo cerrar el otro parque del predio: ${err.message}`
+            : "No se pudo cerrar el otro parque del predio.",
+        );
+      }
+    }
+    if (predio && tipo === EVENTO_TIPO.FINALIZAR_PARQUE) {
+      setSigueEnPredio(await seguirConOtroParqueDelPredio(asignacion.id));
+    }
+    setResumenesPredio(extra);
     const conCierre = [...eventos, { tipo, ts: res.ts,
       motivo: opts?.standby?.motivo, motivoOtro: opts?.standby?.motivoOtro }];
+    setResumen(await textoResumenDe(asignacion, conCierre, aeros));
+    setResumenEsFinal(tipo === EVENTO_TIPO.FINALIZAR_PARQUE);
+    // Con otro parque del predio cerrado a la vez no se ofrece deshacer (reabriría
+    // solo uno de los dos).
+    setDeshacerInfo(
+      tipo === EVENTO_TIPO.SALIDA_PARQUE && extra.length === 0
+        ? { eventoId: res.id, jornadaId: res.jornadaId }
+        : null,
+    );
+  }
+
+  /** Texto del resumen del día de una asignación (externo STOP/RUN o interno). */
+  async function textoResumenDe(
+    a: AsignacionCache,
+    conCierre: Parameters<typeof resumenJornadaDesdeEventos>[0],
+    lista: AeroCache[],
+  ): Promise<string> {
+    const f = fechaHoy(a.tz); // YYYY-MM-DD
+    const numeroDe = (maquinaId: string | null | undefined) =>
+      lista.find((x) => x.id === maquinaId)?.numero ?? null;
+    const nombreDe = (maquinaId: string | null | undefined) =>
+      lista.find((x) => x.id === maquinaId)?.nombre ?? null;
     if (externo) {
-      setResumen(
-        textoResumenJornada(
-          resumenJornadaDesdeEventos(
-            conCierre,
-            {
-              operador: nombreTecnico ?? "—",
-              parque: asignacion.parque_nombre,
-              fecha: `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`,
-            },
-            numeroDe,
-            nombreDe,
-          ),
-        ),
-      );
-    } else {
-      const equipo = (await leerEquipoMiembros()) ?? nombreTecnico ?? "—";
-      setResumen(
-        textoResumenInterno(
-          resumenInternoDesdeEventos(
-            conCierre,
-            { ...encabezadoDia(f), parque: asignacion.parque_nombre, equipo },
-            numeroDe,
-            nombreDe,
-          ),
+      return textoResumenJornada(
+        resumenJornadaDesdeEventos(
+          conCierre,
+          {
+            operador: nombreTecnico ?? "—",
+            parque: a.parque_nombre,
+            fecha: `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`,
+          },
+          numeroDe,
+          nombreDe,
         ),
       );
     }
-    setResumenEsFinal(tipo === EVENTO_TIPO.FINALIZAR_PARQUE);
-    setDeshacerInfo(
-      tipo === EVENTO_TIPO.SALIDA_PARQUE ? { eventoId: res.id, jornadaId: res.jornadaId } : null,
+    const equipo = (await leerEquipoMiembros()) ?? nombreTecnico ?? "—";
+    return textoResumenInterno(
+      resumenInternoDesdeEventos(
+        conCierre,
+        { ...encabezadoDia(f), parque: a.parque_nombre, equipo },
+        numeroDe,
+        nombreDe,
+      ),
     );
+  }
+
+  /** Cambia al otro parque del predio (mismo día, otra jornada/parque). */
+  async function cambiarParque(destino: AsignacionCache) {
+    if (busy || !asignacion || destino.id === asignacion.id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await cambiarParqueDelPredio(destino);
+      void sync();
+      onRecargar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cambiar de parque.");
+      window.setTimeout(() => setBusy(false), 300);
+    }
   }
 
   /** Deshace la "Salida de parque" recién registrada (ventana de 10s en
@@ -507,10 +589,12 @@ export function CheckIn({
         throw new Error("Necesitás conexión para cambiar de parque.");
       }
       const supabase = createClient();
+      // Predio: se cancelan juntas las asignaciones de todos sus parques.
+      const ids = predio ? predio.asignaciones.map((x) => x.id) : [asignacion.id];
       const { count, error: errCount } = await supabase
         .from("jornadas")
         .select("id", { count: "exact", head: true })
-        .eq("asignacion_id", asignacion.id);
+        .in("asignacion_id", ids);
       if (errCount) throw errCount;
       if ((count ?? 0) > 0) {
         throw new Error(
@@ -520,9 +604,10 @@ export function CheckIn({
       const { error: errDel } = await supabase
         .from("asignaciones")
         .delete()
-        .eq("id", asignacion.id);
+        .in("id", ids);
       if (errDel) throw errDel;
-      await limpiarAsignacionLocal(asignacion.id);
+      for (const id of ids) await limpiarAsignacionLocal(id);
+      await guardarPredio(null);
       setModal(null);
       onFinalizado(); // vuelve a la selección de parque, sin cerrar sesión
     } catch (err) {
@@ -534,6 +619,8 @@ export function CheckIn({
   }
 
   const on = (tipo: EventoTipo) => botonHabilitado(tipo, estado, subtipo, paisConfig);
+  // Cambio de parque en el predio: con la turbina cerrada y sin stand-by abierto.
+  const puedeCambiarParque = !estado.enTurbina && !estado.enStandby && !estado.enTraslado;
   const etq = (tipo: EventoTipo) => labelEvento(tipo, subtipo);
   const botones = botonesDe(subtipo, paisConfig);
   const nombreParque = asignacion?.parque_nombre ?? "—";
@@ -551,7 +638,9 @@ export function CheckIn({
       {/* Header */}
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-black/10 bg-iner-green px-4 py-3 text-white">
         <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-wide text-white/60">Parque</p>
+          <p className="text-[11px] uppercase tracking-wide text-white/60">
+            {predio ? predio.nombre : "Parque"}
+          </p>
           <p className="truncate text-sm font-bold">{nombreParque}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -576,6 +665,43 @@ export function CheckIn({
       </header>
 
       <div className="flex-1 space-y-4 p-4">
+        {predio && asignacion && (
+          <div>
+            <div
+              role="tablist"
+              aria-label="Parque del predio"
+              className="flex gap-1 rounded-xl border border-iner-green/25 bg-white p-1"
+            >
+              {predio.asignaciones.map((a) => {
+                const activo = a.id === asignacion.id;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={activo}
+                    disabled={busy || (!activo && !puedeCambiarParque)}
+                    onClick={() => void cambiarParque(a)}
+                    className={`flex-1 truncate rounded-lg px-2 py-2 text-sm font-bold transition disabled:opacity-40 ${
+                      activo
+                        ? "bg-iner-green text-white"
+                        : "text-iner-green hover:bg-iner-green-50"
+                    }`}
+                  >
+                    {a.parque_nombre}
+                  </button>
+                );
+              })}
+            </div>
+            {!puedeCambiarParque && !estado.diaCerrado && (
+              <p className="mt-1 text-center text-xs text-iner-gray">
+                {estado.enStandby
+                  ? "Termina el stand-by para cambiar de parque."
+                  : "Cierra la turbina para cambiar de parque."}
+              </p>
+            )}
+          </div>
+        )}
         <AvisosJefe />
         {verClima && <ClimaChip onVer={onVerClima} />}
         {ultimo && (
@@ -944,7 +1070,11 @@ export function CheckIn({
         <ModalConfirmar
           peligro
           titulo="Finalizar parque"
-          detalle="Cierra el parque por completo y termina la asignación. Volverás a elegir un parque nuevo. Usá esto solo cuando la inspección esté terminada."
+          detalle={
+            predio
+              ? `Cierra ${nombreParque} por completo. Los otros parques del predio siguen en curso. Usa esto solo cuando la inspección de este parque esté terminada.`
+              : "Cierra el parque por completo y termina la asignación. Volverás a elegir un parque nuevo. Usá esto solo cuando la inspección esté terminada."
+          }
           textoOk="Finalizar parque"
           onCerrar={() => setModal(null)}
           onOk={() => void cerrar(EVENTO_TIPO.FINALIZAR_PARQUE)}
@@ -981,11 +1111,17 @@ export function CheckIn({
       {resumen && !compartir && (
         <ModalResumenDia
           texto={resumen}
+          titulo={asignacion?.parque_nombre}
+          otros={resumenesPredio}
           esFinal={resumenEsFinal}
           onCerrar={() => {
             setResumen(null);
+            setResumenesPredio([]);
             setDeshacerInfo(null);
-            if (resumenEsFinal) onFinalizado();
+            if (resumenEsFinal) {
+              if (sigueEnPredio) onRecargar();
+              else onFinalizado();
+            }
           }}
           onDeshacer={deshacerInfo ? deshacer : undefined}
         />

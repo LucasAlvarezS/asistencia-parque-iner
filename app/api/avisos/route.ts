@@ -57,14 +57,14 @@ export async function POST(req: Request): Promise<Response> {
 
   const { data: jornada } = await admin
     .from("jornadas")
-    .select("tecnico_id, parque_id")
+    .select("tecnico_id, parque_id, fecha")
     .eq("id", ev.jornada_id)
     .maybeSingle();
   if (!jornada) return NextResponse.json({ ok: true, omitido: "sin-jornada" });
 
   const [{ data: tecnico }, { data: parque }, { data: aero }, { data: jefes }] = await Promise.all([
     admin.from("tecnicos").select("nombre, usuario").eq("id", jornada.tecnico_id).maybeSingle(),
-    admin.from("parques").select("nombre, pais").eq("id", jornada.parque_id).maybeSingle(),
+    admin.from("parques").select("nombre, pais, predio").eq("id", jornada.parque_id).maybeSingle(),
     ev.maquina_id
       ? admin.from("aeros").select("numero, nombre").eq("id", ev.maquina_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -73,6 +73,37 @@ export async function POST(req: Request): Promise<Response> {
 
   const destinatarios = (jefes ?? []).map((j) => j.id).filter((id) => id !== jornada.tecnico_id);
   if (destinatarios.length === 0) return NextResponse.json({ ok: true, omitido: "sin-destinatarios" });
+
+  // Predio (0046): el operador tiene una jornada por parque del predio y la app
+  // copia la entrada al cambiar de parque. Solo se avisa la primera del día.
+  if (parque?.predio) {
+    const { data: hermanos } = await admin
+      .from("parques")
+      .select("id")
+      .eq("predio", parque.predio)
+      .neq("id", jornada.parque_id);
+    const ids = (hermanos ?? []).map((h) => h.id);
+    if (ids.length > 0) {
+      const { data: otras } = await admin
+        .from("jornadas")
+        .select("id")
+        .eq("tecnico_id", jornada.tecnico_id)
+        .eq("fecha", jornada.fecha)
+        .in("parque_id", ids);
+      const jornadas = (otras ?? []).map((j) => j.id);
+      if (jornadas.length > 0) {
+        const { count } = await admin
+          .from("eventos")
+          .select("id", { count: "exact", head: true })
+          .in("jornada_id", jornadas)
+          .eq("anulado", false)
+          .eq("tipo", tipo === "entrada_parque" ? "entrada_parque" : "entrada_wtg")
+          .lte("ts_dispositivo", ev.ts_dispositivo)
+          .neq("id", ev.id);
+        if ((count ?? 0) > 0) return NextResponse.json({ ok: true, omitido: "predio-ya-avisado" });
+      }
+    }
+  }
 
   const { data: pais } = parque?.pais
     ? await admin.from("paises").select("tz").eq("id", parque.pais).maybeSingle()
