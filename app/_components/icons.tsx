@@ -275,6 +275,32 @@ export function IconCheck(p: IconProps) {
   );
 }
 
+export function IconChat(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <path d="M21 12a8 8 0 0 1-8 8H4l2.3-2.9A8 8 0 1 1 21 12z" />
+    </IconBase>
+  );
+}
+
+export function IconResumen(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+      <path d="M9 8h6M9 12h6M9 16h3" />
+    </IconBase>
+  );
+}
+
+export function IconCampana(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </IconBase>
+  );
+}
+
 export function IconEnviar(p: IconProps) {
   return (
     <IconBase {...p}>

@@ -181,7 +181,7 @@ export function AvisosJefe({ className = "" }: { className?: string }) {
       {(estado === "inactivo" || estado === "error" || estado === "activando") && (
         <>
           <p className="mt-1">
-            Recibe un aviso cuando cada operador entra al parque y cuando inicia su primera turbina.
+            Recibe un aviso cuando un operador de Vestas entra al parque, inicia su primera turbina o entra en stand-by.
           </p>
           <button
             type="button"

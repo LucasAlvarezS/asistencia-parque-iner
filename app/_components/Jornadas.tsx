@@ -19,6 +19,8 @@ import {
 import { leerEquipoMiembros, leerParques, leerPerfil } from "@/lib/offline/sesion";
 import { createClient } from "@/lib/supabase/client";
 import { TZ_DEFAULT, ahoraISO } from "@/lib/tiempo";
+import { CentroAvisosBoton } from "./CentroAvisos";
+import { IconChevronIzq } from "./icons";
 import { ChatIABoton } from "./ChatIA";
 import { ResumenArgBoton } from "./ResumenArg";
 
@@ -111,18 +113,23 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col">
-      <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-black/10 bg-iner-green px-4 py-3 text-white">
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/90 transition hover:bg-white/20"
-        >
-          ← Volver
-        </button>
-        <p className="text-sm font-bold">Jornadas</p>
-        <div className="ml-auto flex items-center gap-2">
+      <header className="sticky top-0 z-10 border-b border-black/10 bg-iner-green px-4 py-3 text-white">
+        <div className="relative flex min-h-9 items-center justify-center">
+          <button
+            type="button"
+            onClick={onBack}
+            className="absolute left-0 flex items-center gap-0.5 rounded-full bg-white/10 py-1.5 pl-1.5 pr-3 text-xs font-semibold text-white/90 transition hover:bg-white/20"
+          >
+            <IconChevronIzq size={16} />
+            Volver
+          </button>
+          <p className="text-sm font-bold">Jornadas</p>
+        </div>
+        {/* Herramientas del jefe: cada botón se oculta solo si el perfil no tiene su flag. */}
+        <div className="mt-3 flex gap-2 empty:hidden">
           <ChatIABoton />
           <ResumenArgBoton />
+          <CentroAvisosBoton />
         </div>
       </header>
 

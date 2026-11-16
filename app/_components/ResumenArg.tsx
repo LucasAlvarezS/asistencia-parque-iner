@@ -17,7 +17,7 @@ import {
   textoResumenArg,
 } from "@/lib/resumenArg";
 import { createClient } from "@/lib/supabase/client";
-import { IconAlerta, IconCheck, IconChevronDer, IconChevronIzq } from "./icons";
+import { IconAlerta, IconCheck, IconChevronDer, IconChevronIzq, IconResumen } from "./icons";
 import { Overlay } from "./Overlay";
 
 const LS_FLAG = "iner_ver_resumen_arg";
@@ -58,9 +58,10 @@ export function ResumenArgBoton({ className = "" }: { className?: string }) {
       <button
         type="button"
         onClick={() => setAbierto(true)}
-        className={`rounded-full bg-white px-3 py-1 text-xs font-bold text-iner-green transition hover:bg-white/90 ${className}`}
+        className={`btn-barra ${className}`}
       >
-        Resumen Arg
+        <IconResumen size={16} />
+        Resumen
       </button>
       {abierto && <ModalResumenArg onCerrar={() => setAbierto(false)} />}
     </>

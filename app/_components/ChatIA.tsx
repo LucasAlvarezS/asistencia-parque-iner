@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { leerPerfil } from "@/lib/offline/sesion";
 import { createClient } from "@/lib/supabase/client";
-import { IconEnviar } from "./icons";
+import { IconChat, IconEnviar } from "./icons";
 import { Overlay } from "./Overlay";
 
 const LS_FLAG = "iner_chat_ia";
@@ -48,11 +48,32 @@ export function ChatIABoton({ className = "" }: { className?: string }) {
       <button
         type="button"
         onClick={() => setAbierto(true)}
-        className={`rounded-full bg-white px-3 py-1 text-xs font-bold text-iner-green transition hover:bg-white/90 ${className}`}
+        className={`btn-barra ${className}`}
       >
+        <IconChat size={16} />
         Consultas
       </button>
       {abierto && <ModalChat onCerrar={() => setAbierto(false)} />}
+    </>
+  );
+}
+
+/** Muestra **negrita** como negrita y limpia el resto de marcas Markdown del modelo. */
+function Formato({ texto }: { texto: string }) {
+  const limpio = texto
+    .replace(/^\s*[*-]\s+/gm, "• ") // viñetas
+    .replace(/^#+\s*/gm, "") // títulos
+    .replace(/`/g, "");
+  const partes = limpio.split(/\*\*(.+?)\*\*/g);
+  return (
+    <>
+      {partes.map((p, i) =>
+        i % 2 === 1 ? (
+          <strong key={i}>{p.replace(/\*/g, "")}</strong>
+        ) : (
+          <span key={i}>{p.replace(/\*/g, "")}</span>
+        ),
+      )}
     </>
   );
 }
@@ -155,7 +176,7 @@ function ModalChat({ onCerrar }: { onCerrar: () => void }) {
                 : "mr-8 bg-iner-gray-100 text-foreground"
             }`}
           >
-            {m.content}
+            {m.role === "assistant" ? <Formato texto={m.content} /> : m.content}
           </div>
         ))}
         {enviando && <p className="text-sm text-iner-gray">Consultando…</p>}

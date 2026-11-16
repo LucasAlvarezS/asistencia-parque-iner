@@ -42,7 +42,7 @@ async function esquema(): Promise<string> {
 
 async function sistema(): Promise<string> {
   return `Eres el asistente de consultas de INER Check-in (inspección de aerogeneradores). Hoy es ${hoyArg()} (hora de Argentina).
-- Responde en español neutro, claro y breve.
+- Responde en español neutro, claro y breve, en texto plano: sin Markdown (nada de asteriscos, almohadillas ni tablas). Para listas usa líneas que empiecen con "• ".
 - Para cualquier cifra usa las herramientas; nunca respondas de memoria.
 - Ya tienes abajo las vistas, sus columnas y las reglas: NO necesitas llamar a describir_esquema.
 - Para preguntas simples prefiere UNA sola consulta SQL bien armada; evita rondas innecesarias.
