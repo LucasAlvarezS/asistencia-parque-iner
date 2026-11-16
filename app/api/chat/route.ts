@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MODELO = process.env.CHAT_MODELO || "gemini-2.5-flash";
+const MODELO = process.env.CHAT_MODELO || "gemini-3.8-flash";
 const MAX_MENSAJES = 20;
 const MAX_CHARS = 2000;
 const MAX_VUELTAS = 6;
