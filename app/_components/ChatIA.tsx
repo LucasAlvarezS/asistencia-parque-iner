@@ -201,7 +201,7 @@ function ModalChat({ onCerrar }: { onCerrar: () => void }) {
           onChange={(e) => setTexto(e.target.value)}
           placeholder="Escribe tu pregunta"
           maxLength={500}
-          className="min-w-0 flex-1 rounded-full border border-iner-gray/30 px-4 py-2 text-sm outline-none focus:border-iner-green"
+          className="min-w-0 flex-1 rounded-full border border-iner-gray/30 bg-white px-4 py-2 text-base text-foreground outline-none placeholder:text-iner-gray/70 focus:border-iner-green"
         />
         <button
           type="submit"
