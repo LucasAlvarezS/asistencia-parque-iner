@@ -1,6 +1,7 @@
 // Webhook que llama el trigger `avisar_jefe` (migración 0044, vía pg_net) cuando
 // un operador registra su entrada al parque, su primera turbina del día o un
-// inicio de stand-by (0049). Solo parques de VESTAS. Arma
+// inicio de stand-by (0049). Parques de Vestas y de Siemens (Argentina, Chile y
+// Uruguay). Arma
 // el texto y lo envía como push a los técnicos con `recibe_avisos` (piloto:
 // Tomás Caballero), excepto al propio autor del evento.
 
@@ -76,9 +77,9 @@ export async function POST(req: Request): Promise<Response> {
     admin.from("tecnicos").select("id").eq("recibe_avisos", true).eq("activo", true),
   ]);
 
-  // Solo parques de VESTAS (push y centro de notificaciones).
-  if (!parque?.empresa_id?.startsWith("vestas")) {
-    return NextResponse.json({ ok: true, omitido: "no-vestas" });
+  // Parques de Vestas y Siemens (incluye Uruguay), para push y centro de notificaciones.
+  if (!/^(vestas|siemens)/.test(parque?.empresa_id ?? "")) {
+    return NextResponse.json({ ok: true, omitido: "empresa-no-incluida" });
   }
 
   const destinatarios = (jefes ?? []).map((j) => j.id).filter((id) => id !== jornada.tecnico_id);

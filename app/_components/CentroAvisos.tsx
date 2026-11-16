@@ -3,7 +3,7 @@
 // Centro de notificaciones del técnico jefe (flag `tecnicos.recibe_avisos`,
 // migraciones 0044 + 0049). Campana con contador de no leídos y lista de los
 // avisos recibidos (entrada a parque, primera turbina y stand-by de cada operador,
-// solo parques de VESTAS). Para
+// parques de Vestas y Siemens). Para
 // el resto de los perfiles no renderiza nada. Necesita conexión.
 
 import { useCallback, useEffect, useState } from "react";
@@ -178,7 +178,7 @@ function ModalAvisos({ tecnicoId, onCerrar }: { tecnicoId: string; onCerrar: () 
     <Overlay>
       <h2 className="text-base font-bold">Notificaciones</h2>
       <p className="mt-1 text-xs text-iner-gray">
-        Entradas a parque, primera turbina y stand-by de los operadores de Vestas. Últimos {DIAS} días.
+        Entradas a parque, primera turbina y stand-by de los operadores de Vestas y Siemens. Últimos {DIAS} días.
       </p>
 
       {estado === "cargando" && <p className="mt-3 text-sm text-iner-gray">Cargando…</p>}
