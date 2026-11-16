@@ -274,3 +274,12 @@ export function IconCheck(p: IconProps) {
     </IconBase>
   );
 }
+
+export function IconEnviar(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4 20-7z" />
+    </IconBase>
+  );
+}

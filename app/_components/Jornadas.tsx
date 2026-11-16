@@ -19,6 +19,7 @@ import {
 import { leerEquipoMiembros, leerParques, leerPerfil } from "@/lib/offline/sesion";
 import { createClient } from "@/lib/supabase/client";
 import { TZ_DEFAULT, ahoraISO } from "@/lib/tiempo";
+import { ChatIABoton } from "./ChatIA";
 import { ResumenArgBoton } from "./ResumenArg";
 
 interface JornadaFila {
@@ -119,7 +120,10 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
           ← Volver
         </button>
         <p className="text-sm font-bold">Jornadas</p>
-        <ResumenArgBoton className="ml-auto" />
+        <div className="ml-auto flex items-center gap-2">
+          <ChatIABoton />
+          <ResumenArgBoton />
+        </div>
       </header>
 
       <div className="flex-1 space-y-3 p-4">
