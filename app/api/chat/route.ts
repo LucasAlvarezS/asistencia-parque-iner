@@ -12,7 +12,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MODELO = process.env.CHAT_MODELO || "gemini-3.8-flash";
+// Se prueban en orden: si uno está saturado (503/429) o no existe (404), pasa al siguiente.
+// CHAT_MODELO fija el primero; CHAT_MODELOS_RESPALDO (separados por coma) reemplaza los de respaldo.
+const MODELOS = [
+  process.env.CHAT_MODELO || "gemini-3.8-flash",
+  ...(process.env.CHAT_MODELOS_RESPALDO || "gemini-3.8-flash-lite,gemini-2.5-flash-lite")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean),
+];
 const MAX_MENSAJES = 20;
 const MAX_CHARS = 2000;
 const MAX_VUELTAS = 6;
@@ -64,29 +72,48 @@ function declaraciones() {
   });
 }
 
-async function llamarModelo(contents: Contenido[]): Promise<Contenido | null> {
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-goog-api-key": process.env.GEMINI_API_KEY!,
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: sistema() }] },
-        tools: [{ functionDeclarations: declaraciones() }],
-        generationConfig: { maxOutputTokens: 1500, temperature: 0.2 },
-        contents,
-      }),
-    },
-  );
-  if (!r.ok) {
-    const detalle = await r.text().catch(() => "");
-    throw new Error(`Gemini ${r.status}: ${detalle.slice(0, 200)}`);
+class ErrorGemini extends Error {
+  constructor(public estado: number, detalle: string) {
+    super(`Gemini ${estado}: ${detalle.slice(0, 200)}`);
   }
-  const j = (await r.json()) as { candidates?: { content?: Contenido }[] };
-  return j.candidates?.[0]?.content ?? null;
+}
+
+const CAMBIA_MODELO = new Set([404, 429, 500, 502, 503, 504]);
+
+async function llamarModelo(contents: Contenido[]): Promise<Contenido | null> {
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: sistema() }] },
+    tools: [{ functionDeclarations: declaraciones() }],
+    generationConfig: { maxOutputTokens: 1500, temperature: 0.2 },
+    contents,
+  });
+  let ultimo: ErrorGemini | null = null;
+  for (const modelo of MODELOS) {
+    // Dos intentos por modelo (pausa corta) antes de pasar al siguiente.
+    for (let intento = 0; intento < 2; intento++) {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-goog-api-key": process.env.GEMINI_API_KEY!,
+          },
+          body,
+        },
+      );
+      if (r.ok) {
+        const j = (await r.json()) as { candidates?: { content?: Contenido }[] };
+        return j.candidates?.[0]?.content ?? null;
+      }
+      ultimo = new ErrorGemini(r.status, await r.text().catch(() => ""));
+      console.error(`[chat] ${modelo}: ${ultimo.message}`);
+      if (!CAMBIA_MODELO.has(r.status)) throw ultimo; // 400/401/403: no se arregla cambiando de modelo
+      if (r.status === 404) break; // no existe: directo al siguiente
+      if (intento === 0) await new Promise((ok) => setTimeout(ok, 1500));
+    }
+  }
+  throw ultimo ?? new Error("sin modelos");
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -157,6 +184,9 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ respuesta: "La consulta requirió demasiados pasos. Intenta una pregunta más concreta." });
   } catch (e) {
     console.error("[chat]", e);
+    if (e instanceof ErrorGemini && (e.estado === 503 || e.estado === 429)) {
+      return NextResponse.json({ error: "saturado" }, { status: 503 });
+    }
     return NextResponse.json({ error: "fallo" }, { status: 502 });
   }
 }

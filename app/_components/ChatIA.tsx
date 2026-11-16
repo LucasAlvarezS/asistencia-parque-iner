@@ -103,7 +103,9 @@ function ModalChat({ onCerrar }: { onCerrar: () => void }) {
       if (!r.ok) {
         setError(
           r.status === 503
-            ? "El chat aún no está configurado."
+            ? (await r.json().catch(() => ({}))).error === "saturado"
+              ? "El modelo está saturado en este momento. Inténtalo de nuevo en un minuto."
+              : "El chat aún no está configurado."
             : "No se pudo responder. Inténtalo de nuevo.",
         );
         return;
