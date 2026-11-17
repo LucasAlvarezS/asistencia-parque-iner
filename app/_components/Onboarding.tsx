@@ -19,6 +19,10 @@ import {
 import { hidratarAsignaciones } from "@/lib/offline/predio";
 import { AvisosJefe } from "./AvisosJefe";
 import { Hero } from "./Hero";
+import { Overlay } from "./Overlay";
+
+// Lo recuerda AvisosJefe con el id del técnico que tiene `recibe_avisos` (jefe).
+const LS_JEFE = "iner_recibe_avisos";
 
 export function Onboarding({
   onReady,
@@ -34,6 +38,11 @@ export function Onboarding({
   const [creando, setCreando] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nombreTecnico, setNombreTecnico] = useState<string | null>(null);
+  // Parque tocado, a la espera de confirmación: un toque suelto (p. ej. al
+  // moverse la pantalla mientras carga) ya no crea una asignación.
+  const [pendiente, setPendiente] = useState<ItemParque | null>(null);
+  // El jefe entra a esta pantalla sobre todo para ir a Jornadas: el botón va arriba.
+  const [esJefe, setEsJefe] = useState(false);
 
   useEffect(() => {
     let vivo = true;
@@ -43,6 +52,11 @@ export function Onboarding({
         const supabase = createClient();
         const perfil = await leerPerfil();
         if (vivo) setNombreTecnico(perfil?.nombre ?? null);
+        try {
+          if (vivo && perfil) setEsJefe(localStorage.getItem(LS_JEFE) === perfil.id);
+        } catch {
+          // sin almacenamiento: botón en su lugar de siempre
+        }
 
         // Config por país (data-driven): la cachea para el check-in offline.
         const { data: paisesData } = await supabase
@@ -109,6 +123,7 @@ export function Onboarding({
   /** Crea la asignación del parque elegido (o una por cada parque del predio) y
    *  entra al check-in. */
   async function elegir(item: ItemParque) {
+    setPendiente(null);
     setError(null);
     setCreando(item.clave);
     try {
@@ -139,6 +154,12 @@ export function Onboarding({
   const paises = [...new Set(parques.map((p) => p.pais))] as Pais[];
   const items = itemsDeParques(parques);
 
+  const botonJornadas = (clase: string) => (
+    <button type="button" onClick={onVerJornadas} className={`btn-secondary w-full ${clase}`}>
+      Ver jornadas
+    </button>
+  );
+
   return (
     <main className="flex min-h-full flex-1 items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
@@ -150,6 +171,7 @@ export function Onboarding({
             </p>
           )}
           <AvisosJefe className="mb-3" />
+          {esJefe && botonJornadas("mb-4")}
           {error && (
             <p className="mb-3 rounded-lg border border-iner-amber bg-iner-amber-50 px-3 py-2 text-sm text-[#9a6200]">
               {error}
@@ -177,7 +199,7 @@ export function Onboarding({
                           <button
                             type="button"
                             disabled={creando !== null}
-                            onClick={() => elegir(it)}
+                            onClick={() => setPendiente(it)}
                             className="flex w-full items-center justify-between px-3 py-3 text-left transition hover:bg-iner-green-50 disabled:opacity-50"
                           >
                             <span className="min-w-0">
@@ -206,13 +228,7 @@ export function Onboarding({
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={onVerJornadas}
-            className="btn-secondary mt-4 w-full"
-          >
-            Ver jornadas
-          </button>
+          {!esJefe && botonJornadas("mt-4")}
 
           <button
             type="button"
@@ -223,6 +239,29 @@ export function Onboarding({
           </button>
         </div>
       </div>
+
+      {pendiente && (
+        <Overlay>
+          <h2 className="text-base font-bold">¿Iniciar en {pendiente.nombre}?</h2>
+          <p className="mt-1 text-sm text-iner-gray">
+            {pendiente.parques.length > 1
+              ? `Quedarás asignado a ${pendiente.parques.map((p) => p.nombre).join(" y ")}.`
+              : "Quedarás asignado a este parque hasta finalizarlo."}
+          </p>
+          <div className="mt-4 flex gap-2">
+            <button type="button" onClick={() => setPendiente(null)} className="btn-secondary flex-1">
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => void elegir(pendiente)}
+              className="flex-1 rounded-lg bg-iner-green px-3 py-2 font-bold text-white transition hover:bg-iner-green-700"
+            >
+              Iniciar
+            </button>
+          </div>
+        </Overlay>
+      )}
     </main>
   );
 }

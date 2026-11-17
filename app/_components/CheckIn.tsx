@@ -789,9 +789,9 @@ export function CheckIn({
               type="button"
               disabled={busy}
               onClick={() => setModal("cancelar")}
-              className="-mt-1 w-full text-center text-xs text-iner-gray underline disabled:opacity-40"
+              className="btn-secondary w-full text-sm disabled:opacity-40"
             >
-              ¿Parque equivocado? Cambiar de parque
+              ¿Parque equivocado? Cancelar y cambiar de parque
             </button>
           )
         )}
